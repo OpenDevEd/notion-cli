@@ -47,7 +47,7 @@ program
   .option('-l, --list', 'list all databases (which the integration has access to)')
   .option('-r, --retrieve', 'Retrieve database with id')
   .option('-q, --query', 'Retrieve database with id')
-  .description('List databases or retrieve details about databases. Note that only those databases will be retrieved which the integration has access to.')
+  .description('List databases or retrieve details about databases. Note that only those databases will be retrieved which the integration has access to. If an id is provided without options, \'retrieve\' is assumed. Without any options, \'list\' is assumed.')
   .action(async (id, options) => {
     runner(databases, id, options)
   });
@@ -92,21 +92,23 @@ async function runner(fn, id, options) {
   if (globaloptions.save) {
     fs.writeFileSync(globaloptions.save, stroutput);
   }
-  const template = removeNonEditable(output.result[0].properties)
-  if (globaloptions.template) {
-    fs.writeFileSync(
-      globaloptions.template,
-      JSON.stringify(
-        template,
-        null, 2)
-    )
-  }
-  if (globaloptions.exportdata) {
-    const arr = Object.keys(template).map(key => ({ __key: key, ...template[key] }));
-    fs.writeFileSync(
-      globaloptions.exportdata,
-      JSON.stringify(arr, null, 2)
-    )
+  if (fn.name == "page") {
+    const template = removeNonEditable(output.result[0].properties)
+    if (globaloptions.template) {
+      fs.writeFileSync(
+        globaloptions.template,
+        JSON.stringify(
+          template,
+          null, 2)
+      )
+    }
+    if (globaloptions.exportdata) {
+      const arr = Object.keys(template).map(key => ({ __key: key, ...template[key] }));
+      fs.writeFileSync(
+        globaloptions.exportdata,
+        JSON.stringify(arr, null, 2)
+      )
+    }
   }
   if (!globaloptions.quiet) {
     console.log(stroutput)
@@ -119,7 +121,10 @@ async function users(id, options) {
 }
 
 async function databases(id, options) {
-  if (options.list || !id) {
+  if (id.length > 0 && !options.list && !options.query && !options.retrieve) {
+    options.retrieve = true
+  }
+  if (options.list || id.length == 0) {
     const response = await notion.databases.list();
     return response
   } else {
@@ -202,7 +207,8 @@ async function createPage(properties, databaseid, options) {
       Week: d.weekNumber,
       Day: ymd,
       Due: ymd,
-      "Due Day": ymd,
+      "Due date": ymd,
+      "Due Date": ymd,
       Date: ymd
     }
     if (globaloptions.debug)
@@ -214,6 +220,9 @@ async function createPage(properties, databaseid, options) {
       }
     })
   }
+  //console.log("TEMPORARY="+JSON.stringify(   properties         ,null,2))
+  //process.exit(1)
+
   const response = await notion.pages.create({
     parent: {
       database_id: databaseid
