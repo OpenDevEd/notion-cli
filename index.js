@@ -195,15 +195,23 @@ async function createPage(properties, databaseid, options) {
       d = DateTime.fromISO(isodate)
       //console.log("D="+d)
     }
+    const ymd = d.toFormat("yyyy-LL-dd")
     const thedate = {
       Year: d.year,
       Month: d.month,
-      Week: d.weekNumber
+      Week: d.weekNumber,
+      Day: ymd,
+      Due: ymd,
+      "Due Day": ymd,
+      Date: ymd
     }
     if (globaloptions.debug)
       console.log("Date_options=" + JSON.stringify(thedate, null, 2))
     Object.keys(thedate).forEach(x => {
-      if (properties[x]) properties[x].number = thedate[x]
+      if (properties[x]) {
+        if (properties[x].number) properties[x].number = thedate[x]
+        if (properties[x].date) properties[x].date.start = thedate[x]
+      }
     })
   }
   const response = await notion.pages.create({
