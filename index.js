@@ -12,6 +12,7 @@ const { Client } = require("@notionhq/client");
 var _ = require('lodash');
 var { DateTime } = require('luxon');
 var Sugar = require('sugar');
+const { exec } = require("child_process");
 
 const confdir = require('os').homedir() + "/.config/notion-cli/"
 const CONFIG_FILE = confdir + 'config.json';
@@ -34,6 +35,7 @@ program
   .option('-s, --save [file]', 'save full output', 'output.json')
   .option('-t, --template [file]', 'save properties of first result from output, suitable for template in using in create', 'template.json')
   .option('--exportdata <file>', 'save properties of first result from output, suitable for using with --data in "page --duplicate"')
+  .option('--open', 'Open url(s) resulting from the calls via xdg-open')
 
 program
   .command('users [id...]')
@@ -112,6 +114,11 @@ async function runner(fn, id, options) {
   }
   if (!globaloptions.quiet) {
     console.log(stroutput)
+  }
+  if (globaloptions.open) {
+    await Promise.all(output.result.map(async (res) => {
+      if (res.url) await system(`xdg-open "${res.url}"`);
+    }));
   }
 }
 
@@ -273,4 +280,19 @@ function cleanUpOne(value) {
     value = value.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5");
   };
   return value;
+}
+
+async function system(command) {
+  console.log("Exec: " + command)
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.log(`error: ${error.message}`);
+      return;
+    }
+    if (stderr) {
+      console.log(`stderr: ${stderr}`);
+      return;
+    }
+    console.log(`stdout: ${stdout}`);
+  });
 }
