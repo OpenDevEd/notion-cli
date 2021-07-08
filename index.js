@@ -68,11 +68,12 @@ program
   });
 
 program
-  .command('create <database> <template>')
+  .command('create <template...>')
+  .option('-d, --database <database>', 'Create in database.')
   .option('-n, --name <name>', 'Use the name provided for the copy or duplicate.')
-  .description('Create page in a database from a template.')
-  .action(async (id, options) => {
-    runner(page, id, options)
+  .description('Create page(s) in a database from template(s).')
+  .action(async (template, options) => {
+    runner(create, template, options)
   });
 
 program.parse(process.argv);
@@ -111,6 +112,8 @@ async function runner(fn, id, options) {
         JSON.stringify(arr, null, 2)
       )
     }
+    // We might have an option here that exports the template but using keys.
+    // Alternatively, have an option under 'create' that can work with the 'exportdata' format.
   }
   if (!globaloptions.quiet) {
     console.log(stroutput)
@@ -173,14 +176,27 @@ async function page(id, options) {
   return res
 }
 
+async function create(template, options) {
+  let res = []
+  await Promise.all(template.map(async (te) => {
+    const json = fs.readFileSync(te);
+    const properties = JSON.parse(json);    
+    const resp = await createPage(properties, options.database, options)
+    res.push(resp)
+  }));
+  return res
+}
+
 async function createPage(properties, databaseid, options) {
   const title = identifyTitle(properties)
   // It should be possible to set properties by id (according to API docs), but not sure how.
+  //console.log("TEMPORARY="+JSON.stringify(  properties          ,null,2)) 
+  console.log("TEMPORARY="+JSON.stringify(    properties[title].title[0].text.content       ,null,2))
   properties[title] = {
     title: [
       {
         text: {
-          content: options.name ? options.name : "COPY OF " + properties.Name.title[0].text.content
+          content: options.name ? options.name : "COPY OF " + properties[title].title[0].text.content
         },
       },
     ],
