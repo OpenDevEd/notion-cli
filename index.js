@@ -62,6 +62,7 @@ program
   .option('--data <file>', 'provide a file with json to apply to copy.')
   .option('--json <string>', 'provide a string with json to apply to copy.')
   .option('--date [string]', 'Add a date to various fields (Date, Due, Week, Month, Year). Defaults to today.')
+  .option('--hours [number]', 'Defaults to 1.')
   .description('Retrieve or duplicate page. Note that page \'linked\' properties (e.g. related) will only appear in the json if the integration has access to the linked tables. Further, in the API, the number of such related entries appears to be limited to 25.')
   .action(async (id, options) => {
     runner(page, id, options)
@@ -69,11 +70,24 @@ program
 
 program
   .command('create <template...>')
-  .option('-d, --database <database>', 'Create in database.')
+  .option('-b, --database <database>', 'Create in database.')
   .option('-n, --name <name>', 'Use the name provided for the copy or duplicate.')
   .description('Create page(s) in a database from template(s).')
   .action(async (template, options) => {
     runner(create, template, options)
+  });
+
+program
+  .command('query <database>')
+  .option('-f, --filter <filter>', 'Provide a json string that describes a filter (alternative to providing a -f <filter>).')
+  .option('-i, --filterfile <filterfile>', 'Provide a file with json string that describes a filter (alternative to providing a -i <filterfile>).')
+  .option('-s, --sorts <sorts>', 'Provide a json string that describes a sort.')
+  .option('-t, --sortsfile <sortsfile>', 'Provide a json string that describes a sort.')
+  .option('-c, --cursor <start_cursor>', 'Use the name provided for the copy or duplicate.')
+  .option('-p, --page_size <page_size>', 'Use the name provided for the copy or duplicate.')
+  .description('Query the database <database> with filter. API ref: https://developers.notion.com/reference/post-database-query')
+  .action(async (database, options) => {
+    runner(query, database, options)
   });
 
 program.parse(process.argv);
@@ -180,7 +194,7 @@ async function create(template, options) {
   let res = []
   await Promise.all(template.map(async (te) => {
     const json = fs.readFileSync(te);
-    const properties = JSON.parse(json);    
+    const properties = JSON.parse(json);
     const resp = await createPage(properties, options.database, options)
     res.push(resp)
   }));
@@ -191,7 +205,7 @@ async function createPage(properties, databaseid, options) {
   const title = identifyTitle(properties)
   // It should be possible to set properties by id (according to API docs), but not sure how.
   //console.log("TEMPORARY="+JSON.stringify(  properties          ,null,2)) 
-  console.log("TEMPORARY="+JSON.stringify(    properties[title].title[0].text.content       ,null,2))
+  console.log("TEMPORARY=" + JSON.stringify(properties[title].title[0].text.content, null, 2))
   properties[title] = {
     title: [
       {
@@ -236,6 +250,9 @@ async function createPage(properties, databaseid, options) {
     }
     if (globaloptions.debug)
       console.log("Date_options=" + JSON.stringify(thedate, null, 2))
+    if (options.hours) {
+      thedate["Hours actual"] = parseFloat(options.hours)
+    }
     Object.keys(thedate).forEach(x => {
       if (properties[x]) {
         if (properties[x].number) properties[x].number = thedate[x]
@@ -254,6 +271,50 @@ async function createPage(properties, databaseid, options) {
   });
   return response
 }
+
+async function query(databaseId, options) {
+  let filter = null
+  if (options.filterfile !== undefined) {
+    console.log("X=" + options.filterfile)
+    const jsonstring = fs.readFileSync(options.filterfile);
+    filter = JSON.parse(jsonstring)
+  }
+  if (options.filter !== undefined) {
+    if (filter) {
+      console.log("Adding --filter <filterstring> to --filterfile <filterfile>.")
+    }
+    const jsonstring = JSON.parse(options.filter)
+    filter = { ...filter, ...jsonstring }
+  }
+  /* if (!jsonstring) {
+    console.log("Use either --filter <filterstring> or [filterfile].")
+    process.exit(1)
+  } */
+  let querystring = {
+    database_id: databaseId,
+  }
+  if (filter) {
+    querystring = { ...querystring, filter: filter }
+  }
+  let sorts = null
+  //  .option('-s, --sorts <sorts>', 'Provide a json string that describes a sort.')
+  //  .option('-t, --sortsfile <sortsfile>', 'Provide a json string that describes a sort.')
+  if (sorts) {
+    querystring = { ...querystring, sorts: sorts }
+  }
+  if (options.page_size) {
+    if (options.page_size > 100) {
+      console.log("page_size>100")
+    }
+    querystring = { ...querystring, page_size: options.page_size }
+  }
+  if (options.start_cursor) {
+    querystring = { ...querystring, start_cursor: options.start_cursor }
+  }
+  const response = await notion.databases.query(querystring);
+  return response
+}
+
 
 function identifyTitle(properties) {
   const title = _.findKey(properties, function (o) { return o.type == "title" })
