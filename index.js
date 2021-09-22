@@ -46,13 +46,21 @@ program
 
 program
   .command('databases [id...]')
-  .option('-l, --list', 'list all databases (which the integration has access to)')
-  .option('-r, --retrieve', 'Retrieve database with id')
-  .option('-q, --query', 'Retrieve database with id')
-  .description('List databases or retrieve details about databases. Note that only those databases will be retrieved which the integration has access to. If an id is provided without options, \'retrieve\' is assumed. Without any options, \'list\' is assumed.')
+  .option('-l, --list', 'list all databases (which the integration has access to). Endpoint: [get] https://api.notion.com/v1/databases')
+  .option('-r, --retrieve', 'Retrieve database with id. (Requires id.) Endpoint: [get] https://api.notion.com/v1/databases/database_id')
+  .description('List databases or retrieve details about databases. Note that only those databases will be retrieved which the integration has access to. If an id is provided without options, \'retrieve\' is assumed. Without any options, \'list\' is assumed. For \'query\' see separate query command. Endpoints: /databases, /databases/database_id')
   .action(async (id, options) => {
     runner(databases, id, options)
   });
+
+program
+  .command('update <id...>')
+  .option('-p, --properties <string>', 'Json string for the update')
+  .description('Update page(s) with given properties. API doc: https://developers.notion.com/reference/patch-page. Examples for <string>: \'{"Some column": {"number": 12}}\' or \'{"Some property": {"date": {"start": "2021-08-11", "end":"2021-08-12"}}}\'. (Unclear how to set the date to undefined.)')
+  .action(async (id, options) => {
+    runner(update, id, options)
+  });
+
 
 program
   .command('page <id...>')
@@ -83,9 +91,9 @@ program
   .option('-i, --filterfile <filterfile>', 'Provide a file with json string that describes a filter (alternative to providing a -i <filterfile>).')
   .option('-s, --sorts <sorts>', 'Provide a json string that describes a sort.')
   .option('-t, --sortsfile <sortsfile>', 'Provide a json string that describes a sort.')
-  .option('-c, --cursor <start_cursor>', 'Use the name provided for the copy or duplicate.')
-  .option('-p, --page_size <page_size>', 'Use the name provided for the copy or duplicate.')
-  .description('Query the database <database> with filter. API ref: https://developers.notion.com/reference/post-database-query')
+  .option('-c, --cursor <cursor>', 'Set the start_cursor.')
+  .option('-p, --page_size <page_size>', 'Set the page size.')
+  .description('Query the database <database> with filter. API ref: https://developers.notion.com/reference/post-database-query Endpoint: [post] https://api.notion.com/v1/databases/database_id/query')
   .action(async (database, options) => {
     runner(query, database, options)
   });
@@ -145,24 +153,38 @@ async function users(id, options) {
 }
 
 async function databases(id, options) {
-  if (id.length > 0 && !options.list && !options.query && !options.retrieve) {
+  if (id.length > 0 && !options.list && !options.retrieve) {
     options.retrieve = true
   }
   if (options.list || id.length == 0) {
     const response = await notion.databases.list();
     return response
   } else {
-    if (options.retrieve) {
-      const response = await notion.databases.retrieve({ database_id: id[0] });
-      return response
-    } else if (options.query) {
-      const response = await notion.databases.query({
-        database_id: id[0]
-      });
-      return response
-    }
+    // Needs a promise all
+    const response = await notion.databases.retrieve({ database_id: id[0] });
+    return response
   }
 }
+
+
+async function update(id, options) {
+  let res = []
+  await Promise.all(id.map(async (pageId) => {
+    if (!options.properties) {
+      const response = await notion.pages.retrieve({ page_id: pageId });
+      res.push(response);
+    } else {
+      const command = {
+	page_id: id,
+	properties: JSON.parse(options.properties)
+      };
+      // console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
+      const response = await notion.pages.update(command);
+      res.push(response);
+    };
+  }));
+  return res
+};
 
 /*
 Each page property is computed with a limit of 25 page references. Therefore relation property values feature a maximum of 25 relations, rollup property values are calculated based on a maximum of 25 relations, and rich text property values feature a maximum of 25 page mentions.
@@ -252,6 +274,7 @@ async function createPage(properties, databaseid, options) {
       console.log("Date_options=" + JSON.stringify(thedate, null, 2))
     if (options.hours) {
       thedate["Hours actual"] = parseFloat(options.hours)
+      thedate["Hrs actual [per owner]"] = parseFloat(options.hours)
     }
     Object.keys(thedate).forEach(x => {
       if (properties[x]) {
@@ -303,14 +326,16 @@ async function query(databaseId, options) {
     querystring = { ...querystring, sorts: sorts }
   }
   if (options.page_size) {
-    if (options.page_size > 100) {
+    if (parseInt(options.page_size) > 100) {
       console.log("page_size>100")
     }
-    querystring = { ...querystring, page_size: options.page_size }
+    querystring = { ...querystring, page_size: parseInt(options.page_size) }
   }
-  if (options.start_cursor) {
-    querystring = { ...querystring, start_cursor: options.start_cursor }
-  }
+  //console.log("TEMPORARY="+JSON.stringify(   options.start_cursor        ,null,2));
+  if (options.cursor) {
+    querystring = { ...querystring, start_cursor: options.cursor }
+  };
+  //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
   const response = await notion.databases.query(querystring);
   return response
 }
