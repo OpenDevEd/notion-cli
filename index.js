@@ -196,14 +196,16 @@ async function page(id, options) {
     const response = await notion.pages.retrieve({ page_id: pageId });
     let properties = response.properties
     let databaseid = response.parent.database_id
-    // console.log(JSON.stringify(response, null, 2))
+    let icon = response.icon
+    //console.log(JSON.stringify(response, null, 2))
+    //process.exit(1)
     if (options.duplicate || options.copy) {
       if (options.copy) {
         databaseid = options.copy
       }
       properties = removeNonEditable(properties)
       // Find the property that has type 'title' (or id 'title')`
-      const resp = await createPage(properties, databaseid, options)
+      const resp = await createPage(properties, databaseid, options, icon)
       res.push(resp)
     } else {
       res.push(response)
@@ -214,20 +216,21 @@ async function page(id, options) {
 
 async function create(template, options) {
   let res = []
+  const icon = null
   await Promise.all(template.map(async (te) => {
     const json = fs.readFileSync(te);
     const properties = JSON.parse(json);
-    const resp = await createPage(properties, options.database, options)
+    const resp = await createPage(properties, options.database, options, icon)
     res.push(resp)
   }));
   return res
 }
 
-async function createPage(properties, databaseid, options) {
+async function createPage(properties, databaseid, options, icon) {
   const title = identifyTitle(properties)
   // It should be possible to set properties by id (according to API docs), but not sure how.
   //console.log("TEMPORARY="+JSON.stringify(  properties          ,null,2)) 
-  console.log("TEMPORARY=" + JSON.stringify(properties[title].title[0].text.content, null, 2))
+  //console.log("TEMPORARY=" + JSON.stringify(properties[title].title[0].text.content, null, 2))
   properties[title] = {
     title: [
       {
@@ -267,6 +270,7 @@ async function createPage(properties, databaseid, options) {
       Day: ymd,
       Due: ymd,
       "Due date": ymd,
+      "Due date [scheduled]": ymd,
       "Due Date": ymd,
       Date: ymd
     }
@@ -286,12 +290,32 @@ async function createPage(properties, databaseid, options) {
   //console.log("TEMPORARY="+JSON.stringify(   properties         ,null,2))
   //process.exit(1)
 
-  const response = await notion.pages.create({
+  // Not sure if this url="" is a bug. The following fixes this:
+  if (properties.URL.url == "") {
+    properties.URL.url = null
+  };
+
+  let createCommand = {
     parent: {
       database_id: databaseid
     },
     properties: properties
-  });
+  };
+  if (icon) { 
+    createCommand  =  { icon, ...createCommand }
+  };
+  //console.log("TEMPORARY="+JSON.stringify(    createCommand     ,null,2))
+  //process.exit(1)
+  // Bug: Where multi_select has no optins, it's set to null,
+  /* "properties": {
+    "Tags": {
+      "id": "bXr~",
+      "type": "multi_select",
+      "multi_select": null
+    },
+  */
+  // instead, it needs to be [] for the request to succeed.
+  const response = await notion.pages.create(createCommand);
   return response
 }
 
