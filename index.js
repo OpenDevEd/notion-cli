@@ -1,4 +1,5 @@
 #!/usr/local/bin/node
+// https://developers.notion.com/reference/
 
 process.on('uncaughtException', (error) => {
   console.log('uncaughtException');
@@ -56,6 +57,13 @@ program
 program
   .command('update <id...>')
   .option('-p, --properties <string>', 'Json string for the update')
+  .option('-c, --cover <cover>', 'Json string with cover spec for the update')
+  .option('-i, --icon <icon>', 'Json string with icon spec for the update')
+  .option('-e, --emoji <emoji>', 'Provide an emoji for the update')
+  .option('--copycover', 'Copy the cover from --from URL to updated page (overridden by -c)')
+  .option('--copyicon', 'Copy the icon from --from URL to updated page (overridden by -i)')
+  .option('--copyproperties', 'Copy all properties from --from URL to updated page (overriden by -i; erases all existing properties)')
+  .option('-f, --from <from>', 'URL for a page, from which cover and icon is copied')
   .description('Update page(s) with given properties. API doc: https://developers.notion.com/reference/patch-page. Examples for <string>: \'{"Some column": {"number": 12}}\' or \'{"Some property": {"date": {"start": "2021-08-11", "end":"2021-08-12"}}}\'. (Unclear how to set the date to undefined.)')
   .action(async (id, options) => {
     runner(update, id, options)
@@ -67,9 +75,10 @@ program
   .option('--copy [database]', 'Copy the page to a database.')
   .option('--duplicate', 'Duplicate the page within the same database.')
   .option('-n, --name <name>', 'Use the name provided for the copy or duplicate (inserted into id=title field).')
-  .option('--data <file>', 'provide a file with json to apply to copy.')
-  .option('--json <string>', 'provide a string with json to apply to copy.')
-  .option('--date [string]', 'Add a date to various fields (Date, Due, Week, Month, Year). Defaults to today.')
+  .option('--data <file>',    'Provide a file with json to apply to copy.')
+  .option('--json <string>',  'Provide a string with json to apply to copy.')
+  .option('--date [string]',  'Add a date to various fields (Date, Due, Week, Month, Year). Defaults to today.')
+  .option('--url <string>',   'Provide url that will be applied to a URL or url field in the page.')
   .option('--hours [number]', 'Defaults to 1.')
   .description('Retrieve or duplicate page. Note that page \'linked\' properties (e.g. related) will only appear in the json if the integration has access to the linked tables. Further, in the API, the number of such related entries appears to be limited to 25.')
   .action(async (id, options) => {
@@ -91,9 +100,11 @@ program
   .option('-i, --filterfile <filterfile>', 'Provide a file with json string that describes a filter (alternative to providing a -i <filterfile>).')
   .option('-s, --sorts <sorts>', 'Provide a json string that describes a sort.')
   .option('-t, --sortsfile <sortsfile>', 'Provide a json string that describes a sort.')
+  .option('-p, --page_size <page_size>', 'Set the page size. Max 100.')
   .option('-c, --cursor <cursor>', 'Set the start_cursor.')
-  .option('-p, --page_size <page_size>', 'Set the page size.')
-  .description('Query the database <database> with filter. API ref: https://developers.notion.com/reference/post-database-query Endpoint: [post] https://api.notion.com/v1/databases/database_id/query')
+  .option('-a, --all', 'Retrieve all results. The results are returned in an flattened array, similar to the usual call. Call specific data is made available in next_cursor_array, has_more_array and results_length_array are available.')
+  .option('-A, --ALL', 'Retrieve all results. Note that the results are returned in an array that contains each response. I.e., response[result][results][0][results]')
+  .description('Query the database <database> with filter. API ref: https://developers.notion.com/reference/post-database-query Endpoint: [post] https://api.notion.com/v1/databases/database_id/query. Results are returned in the array response[result][results].')
   .action(async (database, options) => {
     runner(query, database, options)
   });
@@ -106,6 +117,7 @@ if (globaloptions.debug) console.log("arguments=" + JSON.stringify({
 
 async function runner(fn, id, options) {
   id = cleanUp(id)
+  // console.log("TEMPORARY="+JSON.stringify(     id       ,null,2))
   const result = await fn(id, options)
   const output = {
     ids: id,
@@ -170,15 +182,43 @@ async function databases(id, options) {
 async function update(id, options) {
   let res = []
   await Promise.all(id.map(async (pageId) => {
-    if (!options.properties) {
+    if (!options.properties && !options.cover && !options.icon && !options.from && !options.emoji) {
       const response = await notion.pages.retrieve({ page_id: pageId });
       res.push(response);
     } else {
-      const command = {
-	page_id: id,
-	properties: JSON.parse(options.properties)
+      let command = {
+	page_id: pageId
       };
-      // console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
+      if (options.from) {
+	const pageId = cleanUp(options.from);
+	const response = await notion.pages.retrieve({ page_id: pageId });
+	// console.log("TEMPORARY="+JSON.stringify(   command        ,null,2))
+	if (options.copyicon) {
+	  command = {
+	    ...command,
+	    icon: response.icon,
+	  }
+	}
+	if (options.copycover) {
+	  command = {
+	    ...command,
+	    cover: response.cover
+	  };
+	};
+      };
+      if (options.properties) {
+	command = { properties: JSON.parse(options.properties), ...command };
+      };
+      if (options.cover) {
+	command = { cover: JSON.parse(options.cover), ...command };
+      };      
+      if (options.icon) {	
+	command = { icon: JSON.parse(options.icon), ...command };
+      };
+      if (options.emoji) {	
+	command = { icon: { "type": "emoji", "emoji": options.emoji }, ...command };
+      };
+    //  console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
       const response = await notion.pages.update(command);
       res.push(response);
     };
@@ -196,7 +236,8 @@ async function page(id, options) {
     const response = await notion.pages.retrieve({ page_id: pageId });
     let properties = response.properties
     let databaseid = response.parent.database_id
-    let icon = response.icon
+    const icon = response.icon
+    const cover = response.cover 
     //console.log(JSON.stringify(response, null, 2))
     //process.exit(1)
     if (options.duplicate || options.copy) {
@@ -205,7 +246,7 @@ async function page(id, options) {
       }
       properties = removeNonEditable(properties)
       // Find the property that has type 'title' (or id 'title')`
-      const resp = await createPage(properties, databaseid, options, icon)
+      const resp = await createPage(properties, databaseid, options, icon, cover)
       res.push(resp)
     } else {
       res.push(response)
@@ -226,7 +267,7 @@ async function create(template, options) {
   return res
 }
 
-async function createPage(properties, databaseid, options, icon) {
+async function createPage(properties, databaseid, options, icon, cover) {
   const title = identifyTitle(properties)
   // It should be possible to set properties by id (according to API docs), but not sure how.
   //console.log("TEMPORARY="+JSON.stringify(  properties          ,null,2)) 
@@ -279,7 +320,7 @@ async function createPage(properties, databaseid, options, icon) {
     if (options.hours) {
       thedate["Hours actual"] = parseFloat(options.hours)
       thedate["Hrs actual [per owner]"] = parseFloat(options.hours)
-    }
+    }    
     Object.keys(thedate).forEach(x => {
       if (properties[x]) {
         if (properties[x].number) properties[x].number = thedate[x]
@@ -287,13 +328,23 @@ async function createPage(properties, databaseid, options, icon) {
       }
     })
   }
-  //console.log("TEMPORARY="+JSON.stringify(   properties         ,null,2))
-  //process.exit(1)
-
+  if (options.url) {
+    const theurl = {
+      URL: options.url,
+      url: options.url
+    }
+    Object.keys(theurl).forEach(x => {
+      if (properties[x]) {
+        if ("url" in properties[x]) properties[x].url = theurl[x]
+      }
+    })
+  };
   // Not sure if this url="" is a bug. The following fixes this:
-  if (properties.URL.url == "") {
+  if (!("url" in properties.URL) || properties.URL.url == "") {
     properties.URL.url = null
   };
+  //console.log("TEMPORARY="+JSON.stringify(   properties         ,null,2))
+  //process.exit(1)
 
   let createCommand = {
     parent: {
@@ -303,6 +354,9 @@ async function createPage(properties, databaseid, options, icon) {
   };
   if (icon) { 
     createCommand  =  { icon, ...createCommand }
+  };
+  if (cover) { 
+    createCommand  =  { cover, ...createCommand }
   };
   //console.log("TEMPORARY="+JSON.stringify(    createCommand     ,null,2))
   //process.exit(1)
@@ -343,6 +397,7 @@ async function query(databaseId, options) {
   if (filter) {
     querystring = { ...querystring, filter: filter }
   }
+
   let sorts = null
   //  .option('-s, --sorts <sorts>', 'Provide a json string that describes a sort.')
   //  .option('-t, --sortsfile <sortsfile>', 'Provide a json string that describes a sort.')
@@ -361,7 +416,53 @@ async function query(databaseId, options) {
   };
   //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
   const response = await notion.databases.query(querystring);
-  return response
+  // $data->{result}->{has_more}
+  // $data->{result}->{next_cursor}
+  // $data->{result}->{results}
+  if (options.all || options.ALL) {
+    const querystring_original = querystring;
+    let resp = response;
+    let finalResp = [ resp ];
+    let nextCursor = [ ];
+    let hasMore = [ ];
+    let counterArr = [ resp.results.length ];
+    //console.log("YTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
+    nextCursor.push(resp.next_cursor);
+    hasMore.push(resp.has_more);
+    while ("has_more" in resp
+	   && "next_cursor" in resp
+	   && resp.has_more
+	   && resp.next_cursor
+	  ) {
+      // console.log("Repeat: ...");
+      querystring = { ...querystring_original, start_cursor: resp.next_cursor };
+      resp = await notion.databases.query(querystring);
+      finalResp.push(resp);
+      nextCursor.push(resp.next_cursor);
+      hasMore.push(resp.has_more);
+      counterArr.push( resp.results.length);
+    };
+    //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
+    //console.log(finalResp.length);    
+    if (options.all) {
+      // Flatten
+      finalResp = finalResp.map(a => { return a.results } );
+      finalResp = finalResp.flat(1);
+    };
+    if (options.invert) {
+      // Option to switch
+      // obj => Object.fromEntries(Object.entries(obj).map(([k, v]) => [v, k]))
+    };
+    return {
+      "next_cursor_array": nextCursor,
+      "has_more_array": hasMore,
+      "results_length_array": counterArr,
+      "results": finalResp
+    };
+  } else {
+    // console.log("Simple");
+    return response;
+  };
 }
 
 
