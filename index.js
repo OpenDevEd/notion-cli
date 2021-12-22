@@ -312,6 +312,8 @@ async function createPage(properties, databaseid, options, icon, cover) {
       Due: ymd,
       "Due date": ymd,
       "Due date [scheduled]": ymd,
+      "Date [scheduled]": ymd,
+      "Date[scheduled]": ymd,
       "Due Date": ymd,
       Date: ymd
     }
@@ -489,7 +491,6 @@ function removeNonEditable(properties) {
   });
   return properties
 }
-
 
 function cleanUp(value) {
   if (Array.isArray(value)) {
