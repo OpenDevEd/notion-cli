@@ -33,7 +33,8 @@ program.version('0.0.1');
 program
   .option('-d, --debug', 'debug')
   .option('--quiet', 'do not print output to command line')
-  .option('-s, --save [file]', 'save full output', 'output.json')
+  .option('-s, --save', 'save full output')
+  .option('-S, --saveto [file]', 'save full output to file; default: output.json', 'output.json')
   .option('-t, --template [file]', 'save properties of first result from output, suitable for template in using in create', 'template.json')
   .option('--exportdata <file>', 'save properties of first result from output, suitable for using with --data in "page --duplicate"')
   .option('--open', 'Open url(s) resulting from the calls via xdg-open')
@@ -127,7 +128,7 @@ async function runner(fn, id, options) {
   }
   const stroutput = JSON.stringify(output, null, 2)
   if (globaloptions.save) {
-    fs.writeFileSync(globaloptions.save, stroutput);
+    fs.writeFileSync(globaloptions.saveto, stroutput);
   }
   if (fn.name == "page") {
     const template = removeNonEditable(output.result[0].properties)
