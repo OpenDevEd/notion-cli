@@ -342,8 +342,12 @@ async function createPage(properties, databaseid, options, icon, cover) {
     })
   };
   // Not sure if this url="" is a bug. The following fixes this:
-  if (!("url" in properties.URL) || properties.URL.url == "") {
-    properties.URL.url = null
+  if (!(URL in properties) || !("url" in properties.URL) || properties.URL.url == "") {
+    if (!(URL in properties)) {
+      // properties.URL = {"url": null};
+    } else {
+      properties.URL.url = null
+    };
   };
   //console.log("TEMPORARY="+JSON.stringify(   properties         ,null,2))
   //process.exit(1)
