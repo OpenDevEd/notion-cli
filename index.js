@@ -116,7 +116,6 @@ if (globaloptions.debug) console.log("arguments=" + JSON.stringify({
   globaloptions: globaloptions
 }, null, 2))
 
-process.exit();
 
 async function runner(fn, id, options) {
   id = cleanUp(id)
@@ -160,7 +159,6 @@ async function runner(fn, id, options) {
       if (res.url) await system(`xdg-open "${res.url}"`);
     }));
   }
-  process.exit();
 }
 
 async function users(id, options) {
