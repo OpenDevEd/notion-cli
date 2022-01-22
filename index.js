@@ -61,6 +61,8 @@ program
   .option('-c, --cover <cover>', 'Json string with cover spec for the update')
   .option('-i, --icon <icon>', 'Json string with icon spec for the update')
   .option('-e, --emoji <emoji>', 'Provide an emoji for the update')
+  .option('--archived', 'Deletes the page (archived=true)')
+  .option('--unarchived', 'Undeletes the page (archived=false)')
   .option('--copycover', 'Copy the cover from --from URL to updated page (overridden by -c)')
   .option('--copyicon', 'Copy the icon from --from URL to updated page (overridden by -i)')
   .option('--copyproperties', 'Copy all properties from --from URL to updated page (overriden by -i; erases all existing properties)')
@@ -184,12 +186,24 @@ async function databases(id, options) {
 async function update(id, options) {
   let res = []
   await Promise.all(id.map(async (pageId) => {
-    if (!options.properties && !options.cover && !options.icon && !options.from && !options.emoji) {
+    if (!options.properties && !options.cover && !options.icon && !options.from && !options.emoji && !options.archived && !options.unarchived) {
       const response = await notion.pages.retrieve({ page_id: pageId });
       res.push(response);
     } else {
       let command = {
 	page_id: pageId
+      };
+      if (options.unarchived) {
+	command = {
+	  ...command,
+	  archived: false
+	}
+      } else if (options.archived) {
+	console.log("Setting archive")
+	command = {
+	  ...command,
+	  archived: true
+	}
       };
       if (options.from) {
 	const pageId = cleanUp(options.from);
