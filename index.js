@@ -89,6 +89,24 @@ program
   });
 
 program
+  .command('block <id...>')
+  .action(async (id, options) => {
+    runner(block, id, options)
+  });
+
+program
+  .command('blocks <blockId>')
+  .option('-p, --page_size <page_size>', 'Set the page size. Max 100.')
+  .option('-c, --cursor <cursor>', 'Set the start_cursor.')
+  .option('-a, --all', 'Retrieve all results. The results are returned in an flattened array, similar to the usual call. Call specific data is made available in next_cursor_array, has_more_array and results_length_array are available.')
+  .option('-A, --ALL', 'Retrieve all results. Note that the results are returned in an array that contains each response. I.e., response[result][results][0][results]')
+  .description('Get child blocks response[result][results].')
+  .action(async (database, options) => {
+    runner(blocks, database, options)
+  });
+
+
+program
   .command('create <template...>')
   .option('-b, --database <database>', 'Create in database.')
   .option('-n, --name <name>', 'Use the name provided for the copy or duplicate.')
@@ -270,6 +288,83 @@ async function page(id, options) {
   }));
   return res
 }
+
+
+async function block(id, options) {
+  let res = []
+  await Promise.all(id.map(async (blockId) => {
+    const response = await notion.blocks.retrieve({ block_id: blockId });
+    let properties = response.properties
+    res.push(response)
+  }));
+  return res
+}
+
+
+async function blocks(blockId, options) {
+  let querystring = {
+    block_id: blockId,
+  }
+  if (options.page_size) {
+    if (parseInt(options.page_size) > 100) {
+      console.log("page_size>100")
+    }
+    querystring = { ...querystring, page_size: parseInt(options.page_size) }
+  }
+  if (options.cursor) {
+    querystring = { ...querystring, start_cursor: options.cursor }
+  };
+  //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
+  const response = await notion.blocks.children.list(querystring);
+  // $data->{result}->{has_more}
+  // $data->{result}->{next_cursor}
+  // $data->{result}->{results}
+  if (options.all || options.ALL) {
+    const querystring_original = querystring;
+    let resp = response;
+    let finalResp = [ resp ];
+    let nextCursor = [ ];
+    let hasMore = [ ];
+    let counterArr = [ resp.results.length ];
+    //console.log("YTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
+    nextCursor.push(resp.next_cursor);
+    hasMore.push(resp.has_more);
+    while ("has_more" in resp
+	   && "next_cursor" in resp
+	   && resp.has_more
+	   && resp.next_cursor
+	  ) {
+      // console.log("Repeat: ...");
+      querystring = { ...querystring_original, start_cursor: resp.next_cursor };
+      resp = await notion.databases.query(querystring);
+      finalResp.push(resp);
+      nextCursor.push(resp.next_cursor);
+      hasMore.push(resp.has_more);
+      counterArr.push( resp.results.length);
+    };
+    //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
+    //console.log(finalResp.length);    
+    if (options.all) {
+      // Flatten
+      finalResp = finalResp.map(a => { return a.results } );
+      finalResp = finalResp.flat(1);
+    };
+    if (options.invert) {
+      // Option to switch
+      // obj => Object.fromEntries(Object.entries(obj).map(([k, v]) => [v, k]))
+    };
+    return {
+      "next_cursor_array": nextCursor,
+      "has_more_array": hasMore,
+      "results_length_array": counterArr,
+      "results": finalResp
+    };
+  } else {
+    // console.log("Simple");
+    return response;
+  };
+}
+
 
 async function create(template, options) {
   let res = []
