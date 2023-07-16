@@ -1,4 +1,4 @@
-#!/usr/local/bin/node --unhandled-rejections=strict
+#!/usr/bin/node --unhandled-rejections=strict
 // https://developers.notion.com/reference/
 
 process.on('uncaughtException', (error) => {
@@ -78,10 +78,10 @@ program
   .option('--copy [database]', 'Copy the page to a database.')
   .option('--duplicate', 'Duplicate the page within the same database.')
   .option('-n, --name <name>', 'Use the name provided for the copy or duplicate (inserted into id=title field).')
-  .option('--data <file>',    'Provide a file with json to apply to copy.')
-  .option('--json <string>',  'Provide a string with json to apply to copy.')
-  .option('--date [string]',  'Add a date to various fields (Date, Due, Week, Month, Year). Defaults to today.')
-  .option('--url <string>',   'Provide url that will be applied to a URL or url field in the page.')
+  .option('--data <file>', 'Provide a file with json to apply to copy.')
+  .option('--json <string>', 'Provide a string with json to apply to copy.')
+  .option('--date [string]', 'Add a date to various fields (Date, Due, Week, Month, Year). Defaults to today.')
+  .option('--url <string>', 'Provide url that will be applied to a URL or url field in the page.')
   .option('--hours [number]', 'Defaults to 1.')
   .description('Retrieve or duplicate page. Note that page \'linked\' properties (e.g. related) will only appear in the json if the integration has access to the linked tables. Further, in the API, the number of such related entries appears to be limited to 25.')
   .action(async (id, options) => {
@@ -129,6 +129,15 @@ program
   .action(async (database, options) => {
     runner(query, database, options)
   });
+
+program
+  .command('backup [id...]')
+  .option('-o, --outputdirectory <outputdirectory>', 'Output')
+  .description('Backup the database <database> or all databases. Depending on the size of your database, this could take a long time (hours) to complete. Currently, the database structure and all database entries are backup. Page content is not backed up.')
+  .action(async (id, options) => {
+    runner(makebackup, id, options)
+  });
+
 
 program.parse(process.argv);
 const globaloptions = program.opts();
@@ -200,6 +209,60 @@ async function databases(id, options) {
   }
 }
 
+function gettoday() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const dateString = `${year}-${month}-${day}`;
+  return dateString
+};
+
+async function makebackup(id, options) {
+  console.log(id);
+  console.log(options);
+  const today = gettoday();
+  if (!options.outputdirectory) {
+    throw new Error('An outputdirectory is required.');
+  }
+  const outputdirectory = makeDir(options.outputdirectory + "/" + today);
+  const databasesdir = makeDir(outputdirectory + "/databases/");
+  const pagesdir = makeDir(outputdirectory + "/pages/");
+  const contentdir = makeDir(outputdirectory + "/content/");
+  // const database_list = await notion.databases.list();
+  const database_list = await databases(id, options);
+  database_list.results.forEach(
+    async entry => {
+      const fulltitle = entry.title.map(titleObject => titleObject.plain_text).join('');
+      const filename = `${entry.id}_${fulltitle}.json`;
+      writeJson(databasesdir + filename, entry);
+      const res = await query(entry.id, {"all": true}); // ALL
+      writeJson(pagesdir + filename,res);
+      console.log(`- Entries in ${filename}: ${res.results.length}`);
+      // To get page content, we now need to iterate over the results
+      /* 
+        const content = await page(id);
+        writeJson(contentdir + pagename,content);
+        // We may then need to get blocks as well...
+      */
+    });
+
+  function writeJson(filename, entry) {
+    fs.writeFile(filename, JSON.stringify(entry), (err) => {
+      if (err) throw err;
+      console.log(`Data written to file: ${filename}`);
+    });
+  }
+
+  function makeDir(outputdirectory) {
+    if (!fs.existsSync(outputdirectory)) {
+      fs.mkdirSync(outputdirectory);
+    }
+    return outputdirectory;
+  }
+  // console.log(database_list.length);
+  // return database_list;
+};
 
 async function update(id, options) {
   let res = []
@@ -209,50 +272,50 @@ async function update(id, options) {
       res.push(response);
     } else {
       let command = {
-	page_id: pageId
+        page_id: pageId
       };
       if (options.unarchived) {
-	command = {
-	  ...command,
-	  archived: false
-	}
+        command = {
+          ...command,
+          archived: false
+        }
       } else if (options.archived) {
-	console.log("Setting archive")
-	command = {
-	  ...command,
-	  archived: true
-	}
+        console.log("Setting archive")
+        command = {
+          ...command,
+          archived: true
+        }
       };
       if (options.from) {
-	const pageId = cleanUp(options.from);
-	const response = await notion.pages.retrieve({ page_id: pageId });
-	// console.log("TEMPORARY="+JSON.stringify(   command        ,null,2))
-	if (options.copyicon) {
-	  command = {
-	    ...command,
-	    icon: response.icon,
-	  }
-	}
-	if (options.copycover) {
-	  command = {
-	    ...command,
-	    cover: response.cover
-	  };
-	};
+        const pageId = cleanUp(options.from);
+        const response = await notion.pages.retrieve({ page_id: pageId });
+        // console.log("TEMPORARY="+JSON.stringify(   command        ,null,2))
+        if (options.copyicon) {
+          command = {
+            ...command,
+            icon: response.icon,
+          }
+        }
+        if (options.copycover) {
+          command = {
+            ...command,
+            cover: response.cover
+          };
+        };
       };
       if (options.properties) {
-	command = { properties: JSON.parse(options.properties), ...command };
+        command = { properties: JSON.parse(options.properties), ...command };
       };
       if (options.cover) {
-	command = { cover: JSON.parse(options.cover), ...command };
-      };      
-      if (options.icon) {	
-	command = { icon: JSON.parse(options.icon), ...command };
+        command = { cover: JSON.parse(options.cover), ...command };
       };
-      if (options.emoji) {	
-	command = { icon: { "type": "emoji", "emoji": options.emoji }, ...command };
+      if (options.icon) {
+        command = { icon: JSON.parse(options.icon), ...command };
       };
-    //  console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
+      if (options.emoji) {
+        command = { icon: { "type": "emoji", "emoji": options.emoji }, ...command };
+      };
+      //  console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
       const response = await notion.pages.update(command);
       res.push(response);
     };
@@ -271,7 +334,7 @@ async function page(id, options) {
     let properties = response.properties
     let databaseid = response.parent.database_id
     const icon = response.icon
-    const cover = response.cover 
+    const cover = response.cover
     //console.log(JSON.stringify(response, null, 2))
     //process.exit(1)
     if (options.duplicate || options.copy) {
@@ -322,31 +385,31 @@ async function blocks(blockId, options) {
   if (options.all || options.ALL) {
     const querystring_original = querystring;
     let resp = response;
-    let finalResp = [ resp ];
-    let nextCursor = [ ];
-    let hasMore = [ ];
-    let counterArr = [ resp.results.length ];
+    let finalResp = [resp];
+    let nextCursor = [];
+    let hasMore = [];
+    let counterArr = [resp.results.length];
     //console.log("YTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
     nextCursor.push(resp.next_cursor);
     hasMore.push(resp.has_more);
     while ("has_more" in resp
-	   && "next_cursor" in resp
-	   && resp.has_more
-	   && resp.next_cursor
-	  ) {
+      && "next_cursor" in resp
+      && resp.has_more
+      && resp.next_cursor
+    ) {
       // console.log("Repeat: ...");
       querystring = { ...querystring_original, start_cursor: resp.next_cursor };
       resp = await notion.databases.query(querystring);
       finalResp.push(resp);
       nextCursor.push(resp.next_cursor);
       hasMore.push(resp.has_more);
-      counterArr.push( resp.results.length);
+      counterArr.push(resp.results.length);
     };
     //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
     //console.log(finalResp.length);    
     if (options.all) {
       // Flatten
-      finalResp = finalResp.map(a => { return a.results } );
+      finalResp = finalResp.map(a => { return a.results });
       finalResp = finalResp.flat(1);
     };
     if (options.invert) {
@@ -433,7 +496,7 @@ async function createPage(properties, databaseid, options, icon, cover) {
     if (options.hours) {
       thedate["Hours actual"] = parseFloat(options.hours)
       thedate["Hrs actual [per owner]"] = parseFloat(options.hours)
-    }    
+    }
     Object.keys(thedate).forEach(x => {
       if (properties[x]) {
         if (properties[x].number) properties[x].number = thedate[x]
@@ -469,11 +532,11 @@ async function createPage(properties, databaseid, options, icon, cover) {
     },
     properties: properties
   };
-  if (icon) { 
-    createCommand  =  { icon, ...createCommand }
+  if (icon) {
+    createCommand = { icon, ...createCommand }
   };
-  if (cover) { 
-    createCommand  =  { cover, ...createCommand }
+  if (cover) {
+    createCommand = { cover, ...createCommand }
   };
   //console.log("TEMPORARY="+JSON.stringify(    createCommand     ,null,2))
   //process.exit(1)
@@ -539,31 +602,31 @@ async function query(databaseId, options) {
   if (options.all || options.ALL) {
     const querystring_original = querystring;
     let resp = response;
-    let finalResp = [ resp ];
-    let nextCursor = [ ];
-    let hasMore = [ ];
-    let counterArr = [ resp.results.length ];
+    let finalResp = [resp];
+    let nextCursor = [];
+    let hasMore = [];
+    let counterArr = [resp.results.length];
     //console.log("YTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
     nextCursor.push(resp.next_cursor);
     hasMore.push(resp.has_more);
     while ("has_more" in resp
-	   && "next_cursor" in resp
-	   && resp.has_more
-	   && resp.next_cursor
-	  ) {
+      && "next_cursor" in resp
+      && resp.has_more
+      && resp.next_cursor
+    ) {
       // console.log("Repeat: ...");
       querystring = { ...querystring_original, start_cursor: resp.next_cursor };
       resp = await notion.databases.query(querystring);
       finalResp.push(resp);
       nextCursor.push(resp.next_cursor);
       hasMore.push(resp.has_more);
-      counterArr.push( resp.results.length);
+      counterArr.push(resp.results.length);
     };
     //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
     //console.log(finalResp.length);    
     if (options.all) {
       // Flatten
-      finalResp = finalResp.map(a => { return a.results } );
+      finalResp = finalResp.map(a => { return a.results });
       finalResp = finalResp.flat(1);
     };
     if (options.invert) {
