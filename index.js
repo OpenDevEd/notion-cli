@@ -125,6 +125,8 @@ program
   .option('-c, --cursor <cursor>', 'Set the start_cursor.')
   .option('-a, --all', 'Retrieve all results. The results are returned in an flattened array, similar to the usual call. Call specific data is made available in next_cursor_array, has_more_array and results_length_array are available.')
   .option('-A, --ALL', 'Retrieve all results. Note that the results are returned in an array that contains each response. I.e., response[result][results][0][results]')
+  .option('-v, --verbose', 'Show a progress indicator.')
+  .option('-e, --export <exportdir>', 'Export pages as json to exportdir.')
   .description('Query the database <database> with filter. API ref: https://developers.notion.com/reference/post-database-query Endpoint: [post] https://api.notion.com/v1/databases/database_id/query. Results are returned in the array response[result][results].')
   .action(async (database, options) => {
     runner(query, database, options)
@@ -227,8 +229,12 @@ async function makebackup(id, options) {
   }
   const outputdirectory = makeDir(options.outputdirectory + "/" + today);
   const databasesdir = makeDir(outputdirectory + "/databases/");
+  const objectdir = makeDir(outputdirectory + "/object/");
+  const databasedir = makeDir(objectdir + "/database/");
+  const pagedir = makeDir(objectdir + "/page/");
+  const pagesetsdir = makeDir(outputdirectory + "/pagesets/");
   const pagesdir = makeDir(outputdirectory + "/pages/");
-  const contentdir = makeDir(outputdirectory + "/content/");
+  const pageblocksdir = makeDir(outputdirectory + "/pageblocks/");
   // const database_list = await notion.databases.list();
   const database_list = await databases(id, options);
   database_list.results.forEach(
@@ -236,13 +242,14 @@ async function makebackup(id, options) {
       const fulltitle = entry.title.map(titleObject => titleObject.plain_text).join('');
       const filename = `${entry.id}_${fulltitle}.json`;
       writeJson(databasesdir + filename, entry);
-      const res = await query(entry.id, {"all": true}); // ALL
-      writeJson(pagesdir + filename,res);
+      const res = await query(entry.id, { "all": true, "verbose": true, "exportdir": objectdir }); // ALL
+      writeJson(pagesetsdir + filename, res);
       console.log(`- Entries in ${filename}: ${res.results.length}`);
       // To get page content, we now need to iterate over the results
       /* 
-        const content = await page(id);
-        writeJson(contentdir + pagename,content);
+        const content = await blocks(id);
+        writeJson(pageblocksdir + id,content);
+        notion_object_export(objectdir, content.results);
         // We may then need to get blocks as well...
       */
     });
@@ -254,15 +261,16 @@ async function makebackup(id, options) {
     });
   }
 
-  function makeDir(outputdirectory) {
-    if (!fs.existsSync(outputdirectory)) {
-      fs.mkdirSync(outputdirectory);
-    }
-    return outputdirectory;
-  }
   // console.log(database_list.length);
   // return database_list;
 };
+
+function makeDir(outputdirectory) {
+  if (!fs.existsSync(outputdirectory)) {
+    fs.mkdirSync(outputdirectory);
+  }
+  return outputdirectory;
+}
 
 async function update(id, options) {
   let res = []
@@ -596,6 +604,9 @@ async function query(databaseId, options) {
   };
   //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
   const response = await notion.databases.query(querystring);
+  if (options.exportdir) {
+    notion_object_export(options.exportdir, response.results);
+  };
   // $data->{result}->{has_more}
   // $data->{result}->{next_cursor}
   // $data->{result}->{results}
@@ -609,14 +620,20 @@ async function query(databaseId, options) {
     //console.log("YTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
     nextCursor.push(resp.next_cursor);
     hasMore.push(resp.has_more);
+    let iteration = 0;
     while ("has_more" in resp
       && "next_cursor" in resp
       && resp.has_more
       && resp.next_cursor
     ) {
-      // console.log("Repeat: ...");
+      iteration++;
+      // This doesn't quite work as expected:
+      if (options.verbose) console.log(`Fetching iteration ${iteration}, number of pages ${options.page_size ? options.page_size : 25} = ${iteration * parseInt(options.page_size ? options.page_size : 25)} `);
       querystring = { ...querystring_original, start_cursor: resp.next_cursor };
       resp = await notion.databases.query(querystring);
+      if (options.exportdir) {
+        notion_object_export(options.exportdir, response.results);
+      }
       finalResp.push(resp);
       nextCursor.push(resp.next_cursor);
       hasMore.push(resp.has_more);
@@ -644,6 +661,17 @@ async function query(databaseId, options) {
     return response;
   };
 }
+
+function notion_object_export(directory, response) {
+  response.forEach(r => {
+    const dir = makeDir(directory + "/" + r.object + "/");
+    const filename = dir + r.id + ".json";
+    fs.writeFile(filename, JSON.stringify(r), (err) => {
+      if (err) throw err;
+      // console.log(`Data written to file: ${filename}`);
+    });
+  });
+};
 
 
 function identifyTitle(properties) {
