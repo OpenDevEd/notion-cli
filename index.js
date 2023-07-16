@@ -628,7 +628,7 @@ async function query(databaseId, options) {
     ) {
       iteration++;
       // This doesn't quite work as expected:
-      if (options.verbose) console.log(`Fetching iteration ${iteration}, number of pages ${options.page_size ? options.page_size : 25} = ${iteration * parseInt(options.page_size ? options.page_size : 25)} `);
+      if (options.verbose) console.log(`Fetching iteration ${iteration}, number of pages ${options.page_size ? options.page_size : 100} = ${iteration * parseInt(options.page_size ? options.page_size : 100)} `);
       querystring = { ...querystring_original, start_cursor: resp.next_cursor };
       resp = await notion.databases.query(querystring);
       if (options.exportdir) {
