@@ -58,6 +58,7 @@ program
 program
   .command('update <id...>')
   .option('-p, --properties <string>', 'Json string for the update')
+  .option('-d, --data <file>', 'File with json string for the update')
   .option('-c, --cover <cover>', 'Json string with cover spec for the update')
   .option('-i, --icon <icon>', 'Json string with icon spec for the update')
   .option('-e, --emoji <emoji>', 'Provide an emoji for the update')
@@ -67,6 +68,8 @@ program
   .option('--copyicon', 'Copy the icon from --from URL to updated page (overridden by -i)')
   .option('--copyproperties', 'Copy all properties from --from URL to updated page (overriden by -i; erases all existing properties)')
   .option('-f, --from <from>', 'URL for a page, from which cover and icon is copied')
+  .option('-r, --addrelation <name>', 'Name of a relation <name>.')
+  .option('-v, --relationvalue <name>', 'Page value to be added to the relation.')
   .description('Update page(s) with given properties. API doc: https://developers.notion.com/reference/patch-page. Examples for <string>: \'{"Some column": {"number": 12}}\' or \'{"Some property": {"date": {"start": "2021-08-11", "end":"2021-08-12"}}}\'. (Unclear how to set the date to undefined.)')
   .action(async (id, options) => {
     runner(update, id, options)
@@ -78,8 +81,12 @@ program
   .option('--copy [database]', 'Copy the page to a database.')
   .option('--duplicate', 'Duplicate the page within the same database.')
   .option('-n, --name <name>', 'Use the name provided for the copy or duplicate (inserted into id=title field).')
+  .option('-p, --prefix <name>', 'Use existing page name but add prefix.')
   .option('--data <file>', 'Provide a file with json to apply to copy.')
   .option('--json <string>', 'Provide a string with json to apply to copy.')
+  .option('--relation <string>', 'For duplicate: Provide relation name as <string>.')
+  .option('--value <string>', 'For duplicate: The id <string> is added to the relation.')
+  .option('--valuesource', 'For duplicate: The source page id is added to that relation.')
   .option('--date [string]', 'Add a date to various fields (Date, Due, Week, Month, Year). Defaults to today.')
   .option('--url <string>', 'Provide url that will be applied to a URL or url field in the page.')
   .option('--hours [number]', 'Defaults to 1.')
@@ -104,7 +111,6 @@ program
   .action(async (database, options) => {
     runner(blocks, database, options)
   });
-
 
 program
   .command('create <template...>')
@@ -275,7 +281,17 @@ function makeDir(outputdirectory) {
 async function update(id, options) {
   let res = []
   await Promise.all(id.map(async (pageId) => {
-    if (!options.properties && !options.cover && !options.icon && !options.from && !options.emoji && !options.archived && !options.unarchived) {
+    if (
+      !options.properties
+      && !options.cover
+      && !options.icon
+      && !options.from
+      && !options.emoji
+      && !options.archived
+      && !options.unarchived
+      && !options.addrelation
+      && !options.data
+      ) {
       const response = await notion.pages.retrieve({ page_id: pageId });
       res.push(response);
     } else {
@@ -314,6 +330,17 @@ async function update(id, options) {
       if (options.properties) {
         command = { properties: JSON.parse(options.properties), ...command };
       };
+      if (options.data) {
+        // console.log("Setting data")
+        // load file options.data as json object
+        const newprops = JSON.parse(fs.readFileSync(options.data))
+        if (command.properties) {
+          Object.assign(command.properties, newprops)
+        } else {
+          command = { properties: newprops, ...command };
+        }
+        //console.log("TEMPORARY="+JSON.stringify(   command        ,null,2))
+      }
       if (options.cover) {
         command = { cover: JSON.parse(options.cover), ...command };
       };
@@ -323,6 +350,30 @@ async function update(id, options) {
       if (options.emoji) {
         command = { icon: { "type": "emoji", "emoji": options.emoji }, ...command };
       };
+      if (options.addrelation) {
+        // options.name
+        //console.log(options.namex);
+        console.log(options)
+        const response = await notion.pages.retrieve({ page_id: pageId });
+        const value = cleanUp(options.relationvalue)
+        part = response["properties"][options.addrelation];
+        if (part.has_more) {
+          // quit 
+          console.log(part);
+          console.log("The relationship has more than 25 properties. Quitting...")
+          process.exit(1);
+        } else {
+          part.relation.push({ "id": value[0] });
+          // Delete key "has_mode" from part:
+          delete part["has_more"];
+          delete part["id"];
+        }
+        // console.log(part);
+        const addr = options["addrelation"];
+        addme = {};
+        addme[addr] = part;
+        command = { properties: addme, ...command };
+      }
       //  console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
       const response = await notion.pages.update(command);
       res.push(response);
@@ -351,6 +402,9 @@ async function page(id, options) {
       }
       properties = removeNonEditable(properties)
       // Find the property that has type 'title' (or id 'title')`
+      if (options.valuesource) {
+        options.originalpageid = id
+      }
       const resp = await createPage(properties, databaseid, options, icon, cover)
       res.push(resp)
     } else {
@@ -454,11 +508,15 @@ async function createPage(properties, databaseid, options, icon, cover) {
   // It should be possible to set properties by id (according to API docs), but not sure how.
   //console.log("TEMPORARY="+JSON.stringify(  properties          ,null,2)) 
   //console.log("TEMPORARY=" + JSON.stringify(properties[title].title[0].text.content, null, 2))
+  prefix = ""
+  if (options.prefix) {
+    prefix = options.prefix
+  }
   properties[title] = {
     title: [
       {
         text: {
-          content: options.name ? options.name : "COPY OF " + properties[title].title[0].text.content
+          content: options.name ? options.name : prefix + properties[title].title[0].text.content
         },
       },
     ],
@@ -468,7 +526,12 @@ async function createPage(properties, databaseid, options, icon, cover) {
       const newprops = JSON.parse(options.json)
       Object.assign(properties, newprops)
     }
-  }
+    if (options.data) {
+      // load file options.data as json object
+      const newprops = JSON.parse(fs.readFileSync(options.data))
+      Object.assign(properties, newprops)
+    }
+  };
   if (options.date) {
     var d = DateTime.now();
     if (options.date !== true) {
@@ -534,6 +597,29 @@ async function createPage(properties, databaseid, options, icon, cover) {
   //console.log("TEMPORARY="+JSON.stringify(   properties         ,null,2))
   //process.exit(1)
 
+  if (options.relation) {
+    part = properties[options.relation];
+    if (part.has_more) {
+      // quit 
+      console.log(part);
+      console.log("The relationship has more than 25 properties. Quitting...")
+      process.exit(1);
+    } else {
+      if (options.valuesource) {
+        part.relation.push({ "id": options.originalpageid[0] });
+      }
+      if (options.value) {
+        const value = cleanUp(options.value)
+        part.relation.push({ "id": value[0] });
+      }
+      // Delete key "has_mode" from part:
+      delete part["has_more"];
+      delete part["id"];
+      properties[options.relation] = part
+      console.log(properties)
+      console.log(part)
+    }
+  }
   let createCommand = {
     parent: {
       database_id: databaseid
@@ -691,7 +777,7 @@ function identifyTitle(properties) {
 function removeNonEditable(properties) {
   // Remove properties that cannot be edited    // There may be some more...
   Object.keys(properties).forEach((o) => {
-    if (properties[o]["type"].match(/^(rollup|formula|((created|last_edited)_(time|by)))$/)) {
+    if (properties[o]["type"].match(/^(rollup|formula|((created|last_edited)_(time|by))|unique_id)$/)) {
       delete properties[o];
     };
   });
