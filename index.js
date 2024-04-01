@@ -1,4 +1,4 @@
-#!/usr/bin/node --unhandled-rejections=strict
+#!/usr/bin/env node --unhandled-rejections=strict
 // https://developers.notion.com/reference/
 
 process.on('uncaughtException', (error) => {
