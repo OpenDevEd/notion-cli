@@ -1,9 +1,10 @@
-#!/usr/bin/node --unhandled-rejections=strict
+#!/usr/bin/env node
 // https://developers.notion.com/reference/
 
 process.on('uncaughtException', (error) => {
   console.log('uncaughtException');
   console.error(error);
+  process.exit(1);
 });
 
 const fs = require('fs');
