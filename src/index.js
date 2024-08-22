@@ -62,6 +62,7 @@ program
   .option('-c, --cover <cover>', 'Json string with cover spec for the update')
   .option('-i, --icon <icon>', 'Json string with icon spec for the update')
   .option('-e, --emoji <emoji>', 'Provide an emoji for the update')
+  .option('-P, --prefix <name>', 'Add prefix to page name.')
   .option('--archive', 'Archives the page (archived=true): Note that this also seems to set in_trash=true. https://developers.notion.com/reference/archive-a-page')
   .option('--unarchive', 'Unarchives the page (archived=false)')
   .option('--trash', 'Trashes the page (in_trash=true). It is unclear whether teh in_trash flag can be set separately from archive.')
@@ -293,14 +294,39 @@ async function update(id, options) {
       && !options.unarchive
       && !options.trash
       && !options.untrash
+      && !options.prefix
       && !options.addrelation
       && !options.data
-      ) {
+    ) {
       const response = await notion.pages.retrieve({ page_id: pageId });
       res.push(response);
     } else {
       let command = {
         page_id: pageId
+      };
+      if (options.prefix) {
+        const response = await notion.pages.retrieve({ page_id: pageId });
+        const properties = response.properties;
+        // console.log(response);
+        const titlefield = identifyTitle(properties);
+        const prefix = options.prefix;
+        console.log("titlefield=" + titlefield);
+        command = {
+          ...command,
+          properties:
+          {
+            [titlefield]: {
+              "title": [
+                {
+                  text: {
+                    content: prefix + properties[titlefield].title[0].text.content
+                  },
+                  plain_text: prefix + properties[titlefield].title[0].text.content
+                },
+              ]
+            }
+          }
+        };
       };
       if (options.trash) {
         console.log("Setting in_trash=true")
@@ -392,9 +418,11 @@ async function update(id, options) {
         addme[addr] = part;
         command = { properties: addme, ...command };
       }
-      console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
+      console.log("TEMPORARY=" + JSON.stringify(command, null, 2))
       const response = await notion.pages.update(command);
       res.push(response);
+      console.log(JSON.stringify(response.properties.Name, null, 2));
+      process.exit(0);
     };
   }));
   return res
