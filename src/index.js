@@ -14,18 +14,14 @@ var _ = require('lodash');
 var { DateTime } = require('luxon');
 var Sugar = require('sugar');
 const { exec } = require("child_process");
+const { makebackup } = require('./utils/makebackup.js');
+const {
+  databases, query, block, blocks, gettoday, getNotion
+} = require('./utils/common.js'); // Assuming these functions are in a separate file
 
-const confdir = require('os').homedir() + "/.config/notion-cli/"
-const CONFIG_FILE = confdir + 'config.json';
 
-const data = fs.readFileSync(CONFIG_FILE);
-const config = JSON.parse(data);
 
-const NOTION_TOKEN = config.token;
-
-const notion = new Client({
-  auth: NOTION_TOKEN
-});
+const notion = getNotion();
 
 const program = new Command();
 program.version('0.0.1');
@@ -204,81 +200,6 @@ async function runner(fn, id, options) {
 async function users(id, options) {
   const listUsersResponse = await notion.users.list()
   return listUsersResponse
-}
-
-async function databases(id, options) {
-  if (id.length > 0 && !options.list && !options.retrieve) {
-    options.retrieve = true
-  }
-  if (options.list || id.length == 0) {
-    const response = await notion.databases.list();
-    return response
-  } else {
-    // Needs a promise all
-    const response = await notion.databases.retrieve({ database_id: id[0] });
-    return response
-  }
-}
-
-function gettoday() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const dateString = `${year}-${month}-${day}`;
-  return dateString
-};
-
-async function makebackup(id, options) {
-  console.log(id);
-  console.log(options);
-  const today = gettoday();
-  if (!options.outputdirectory) {
-    throw new Error('An outputdirectory is required.');
-  }
-  const outputdirectory = makeDir(options.outputdirectory + "/" + today);
-  const databasesdir = makeDir(outputdirectory + "/databases/");
-  const objectdir = makeDir(outputdirectory + "/object/");
-  const databasedir = makeDir(objectdir + "/database/");
-  const pagedir = makeDir(objectdir + "/page/");
-  const pagesetsdir = makeDir(outputdirectory + "/pagesets/");
-  const pagesdir = makeDir(outputdirectory + "/pages/");
-  const pageblocksdir = makeDir(outputdirectory + "/pageblocks/");
-  // const database_list = await notion.databases.list();
-  const database_list = await databases(id, options);
-  database_list.results.forEach(
-    async entry => {
-      const fulltitle = entry.title.map(titleObject => titleObject.plain_text).join('');
-      const filename = `${entry.id}_${fulltitle}.json`;
-      writeJson(databasesdir + filename, entry);
-      const res = await query(entry.id, { "all": true, "verbose": true, "exportdir": objectdir }); // ALL
-      writeJson(pagesetsdir + filename, res);
-      console.log(`- Entries in ${filename}: ${res.results.length}`);
-      // To get page content, we now need to iterate over the results
-      /* 
-        const content = await blocks(id);
-        writeJson(pageblocksdir + id,content);
-        notion_object_export(objectdir, content.results);
-        // We may then need to get blocks as well...
-      */
-    });
-
-  function writeJson(filename, entry) {
-    fs.writeFile(filename, JSON.stringify(entry), (err) => {
-      if (err) throw err;
-      console.log(`Data written to file: ${filename}`);
-    });
-  }
-
-  // console.log(database_list.length);
-  // return database_list;
-};
-
-function makeDir(outputdirectory) {
-  if (!fs.existsSync(outputdirectory)) {
-    fs.mkdirSync(outputdirectory);
-  }
-  return outputdirectory;
 }
 
 async function update(id, options) {
@@ -461,80 +382,6 @@ async function page(id, options) {
 }
 
 
-async function block(id, options) {
-  let res = []
-  await Promise.all(id.map(async (blockId) => {
-    const response = await notion.blocks.retrieve({ block_id: blockId });
-    let properties = response.properties
-    res.push(response)
-  }));
-  return res
-}
-
-
-async function blocks(blockId, options) {
-  let querystring = {
-    block_id: blockId,
-  }
-  if (options.page_size) {
-    if (parseInt(options.page_size) > 100) {
-      console.log("page_size>100")
-    }
-    querystring = { ...querystring, page_size: parseInt(options.page_size) }
-  }
-  if (options.cursor) {
-    querystring = { ...querystring, start_cursor: options.cursor }
-  };
-  //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
-  const response = await notion.blocks.children.list(querystring);
-  // $data->{result}->{has_more}
-  // $data->{result}->{next_cursor}
-  // $data->{result}->{results}
-  if (options.all || options.ALL) {
-    const querystring_original = querystring;
-    let resp = response;
-    let finalResp = [resp];
-    let nextCursor = [];
-    let hasMore = [];
-    let counterArr = [resp.results.length];
-    //console.log("YTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
-    nextCursor.push(resp.next_cursor);
-    hasMore.push(resp.has_more);
-    while ("has_more" in resp
-      && "next_cursor" in resp
-      && resp.has_more
-      && resp.next_cursor
-    ) {
-      // console.log("Repeat: ...");
-      querystring = { ...querystring_original, start_cursor: resp.next_cursor };
-      resp = await notion.databases.query(querystring);
-      finalResp.push(resp);
-      nextCursor.push(resp.next_cursor);
-      hasMore.push(resp.has_more);
-      counterArr.push(resp.results.length);
-    };
-    //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
-    //console.log(finalResp.length);    
-    if (options.all) {
-      // Flatten
-      finalResp = finalResp.map(a => { return a.results });
-      finalResp = finalResp.flat(1);
-    };
-    if (options.invert) {
-      // Option to switch
-      // obj => Object.fromEntries(Object.entries(obj).map(([k, v]) => [v, k]))
-    };
-    return {
-      "next_cursor_array": nextCursor,
-      "has_more_array": hasMore,
-      "results_length_array": counterArr,
-      "results": finalResp
-    };
-  } else {
-    // console.log("Simple");
-    return response;
-  };
-}
 
 
 async function create(template, options) {
@@ -693,117 +540,6 @@ async function createPage(properties, databaseid, options, icon, cover) {
   return response
 }
 
-async function query(databaseId, options) {
-  let filter = null
-  if (options.filterfile !== undefined) {
-    console.log("X=" + options.filterfile)
-    const jsonstring = fs.readFileSync(options.filterfile);
-    filter = JSON.parse(jsonstring)
-  }
-  if (options.filter !== undefined) {
-    if (filter) {
-      console.log("Adding --filter <filterstring> to --filterfile <filterfile>.")
-    }
-    const jsonstring = JSON.parse(options.filter)
-    filter = { ...filter, ...jsonstring }
-  }
-  /* if (!jsonstring) {
-    console.log("Use either --filter <filterstring> or [filterfile].")
-    process.exit(1)
-  } */
-  let querystring = {
-    database_id: databaseId,
-  }
-  if (filter) {
-    querystring = { ...querystring, filter: filter }
-  }
-
-  let sorts = null
-  //  .option('-s, --sorts <sorts>', 'Provide a json string that describes a sort.')
-  //  .option('-t, --sortsfile <sortsfile>', 'Provide a json string that describes a sort.')
-  if (sorts) {
-    querystring = { ...querystring, sorts: sorts }
-  }
-  if (options.page_size) {
-    if (parseInt(options.page_size) > 100) {
-      console.log("page_size>100")
-    }
-    querystring = { ...querystring, page_size: parseInt(options.page_size) }
-  }
-  //console.log("TEMPORARY="+JSON.stringify(   options.start_cursor        ,null,2));
-  if (options.cursor) {
-    querystring = { ...querystring, start_cursor: options.cursor }
-  };
-  //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
-  const response = await notion.databases.query(querystring);
-  if (options.exportdir) {
-    notion_object_export(options.exportdir, response.results);
-  };
-  // $data->{result}->{has_more}
-  // $data->{result}->{next_cursor}
-  // $data->{result}->{results}
-  if (options.all || options.ALL) {
-    const querystring_original = querystring;
-    let resp = response;
-    let finalResp = [resp];
-    let nextCursor = [];
-    let hasMore = [];
-    let counterArr = [resp.results.length];
-    //console.log("YTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
-    nextCursor.push(resp.next_cursor);
-    hasMore.push(resp.has_more);
-    let iteration = 0;
-    while ("has_more" in resp
-      && "next_cursor" in resp
-      && resp.has_more
-      && resp.next_cursor
-    ) {
-      iteration++;
-      // This doesn't quite work as expected:
-      if (options.verbose) console.log(`Fetching iteration ${iteration}, number of pages ${options.page_size ? options.page_size : 100} = ${iteration * parseInt(options.page_size ? options.page_size : 100)} `);
-      querystring = { ...querystring_original, start_cursor: resp.next_cursor };
-      resp = await notion.databases.query(querystring);
-      if (options.exportdir) {
-        notion_object_export(options.exportdir, response.results);
-      }
-      finalResp.push(resp);
-      nextCursor.push(resp.next_cursor);
-      hasMore.push(resp.has_more);
-      counterArr.push(resp.results.length);
-    };
-    //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
-    //console.log(finalResp.length);    
-    if (options.all) {
-      // Flatten
-      finalResp = finalResp.map(a => { return a.results });
-      finalResp = finalResp.flat(1);
-    };
-    if (options.invert) {
-      // Option to switch
-      // obj => Object.fromEntries(Object.entries(obj).map(([k, v]) => [v, k]))
-    };
-    return {
-      "next_cursor_array": nextCursor,
-      "has_more_array": hasMore,
-      "results_length_array": counterArr,
-      "results": finalResp
-    };
-  } else {
-    // console.log("Simple");
-    return response;
-  };
-}
-
-function notion_object_export(directory, response) {
-  response.forEach(r => {
-    const dir = makeDir(directory + "/" + r.object + "/");
-    const filename = dir + r.id + ".json";
-    fs.writeFile(filename, JSON.stringify(r), (err) => {
-      if (err) throw err;
-      // console.log(`Data written to file: ${filename}`);
-    });
-  });
-};
 
 
 function identifyTitle(properties) {
