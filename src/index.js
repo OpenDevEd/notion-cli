@@ -62,8 +62,10 @@ program
   .option('-c, --cover <cover>', 'Json string with cover spec for the update')
   .option('-i, --icon <icon>', 'Json string with icon spec for the update')
   .option('-e, --emoji <emoji>', 'Provide an emoji for the update')
-  .option('--archived', 'Deletes the page (archived=true)')
-  .option('--unarchived', 'Undeletes the page (archived=false)')
+  .option('--archive', 'Archives the page (archived=true): Note that this also seems to set in_trash=true. https://developers.notion.com/reference/archive-a-page')
+  .option('--unarchive', 'Unarchives the page (archived=false)')
+  .option('--trash', 'Trashes the page (in_trash=true). It is unclear whether teh in_trash flag can be set separately from archive.')
+  .option('--untrash', 'Untrashes the page (in_trash=false)')
   .option('--copycover', 'Copy the cover from --from URL to updated page (overridden by -c)')
   .option('--copyicon', 'Copy the icon from --from URL to updated page (overridden by -i)')
   .option('--copyproperties', 'Copy all properties from --from URL to updated page (overriden by -i; erases all existing properties)')
@@ -287,8 +289,10 @@ async function update(id, options) {
       && !options.icon
       && !options.from
       && !options.emoji
-      && !options.archived
-      && !options.unarchived
+      && !options.archive
+      && !options.unarchive
+      && !options.trash
+      && !options.untrash
       && !options.addrelation
       && !options.data
       ) {
@@ -298,16 +302,30 @@ async function update(id, options) {
       let command = {
         page_id: pageId
       };
-      if (options.unarchived) {
+      if (options.trash) {
+        console.log("Setting in_trash=true")
         command = {
           ...command,
-          archived: false
+          in_trash: true,
         }
-      } else if (options.archived) {
-        console.log("Setting archive")
+      } else if (options.untrash) {
+        console.log("Setting in_trash=false")
         command = {
           ...command,
-          archived: true
+          in_trash: false,
+        }
+      };
+      if (options.unarchive) {
+        console.log("Setting archive=false")
+        command = {
+          ...command,
+          archived: false,
+        }
+      } else if (options.archive) {
+        console.log("Setting archive=true")
+        command = {
+          ...command,
+          archived: true,
         }
       };
       if (options.from) {
@@ -374,7 +392,7 @@ async function update(id, options) {
         addme[addr] = part;
         command = { properties: addme, ...command };
       }
-      //  console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
+      console.log("TEMPORARY="+JSON.stringify(   command         ,null,2))       
       const response = await notion.pages.update(command);
       res.push(response);
     };
