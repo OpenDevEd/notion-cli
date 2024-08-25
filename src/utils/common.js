@@ -1,5 +1,23 @@
 const fs = require('fs');
+const axios = require('axios');
+
 const { Client } = require("@notionhq/client");
+const {
+    dbinit,
+    dbinsert,
+    dbfind,
+    dbthis
+} = require('./db.js');
+
+// Max queries per second: 3
+const rate_limit_delay = 335;
+const rate_limit_reached_delay = 5 * 60 * 10000;
+const socket_hangup_delay = 1 * 60 * 10000;
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// const notion = getNotion();
+const notion = getNotionWithDelay(rate_limit_delay);
 
 function getNotion() {
     const confdir = require('os').homedir() + "/.config/notion-cli/"
@@ -15,6 +33,128 @@ function getNotion() {
     });
 }
 
+
+function getNotionWithDelay(delayMs, verbose = false) {
+    const confdir = require('os').homedir() + "/.config/notion-cli/"
+    const CONFIG_FILE = confdir + 'config.json';
+    // const LOG_FILE = confdir + 'notion_client.log';
+    const LOG_FILE = `notion_client_${new Date().toISOString().replace(/:/g, '')}.log`;
+
+    const data = fs.readFileSync(CONFIG_FILE);
+    const config = JSON.parse(data);
+
+    const NOTION_TOKEN = config.token;
+
+    let lastCallTime = 0;
+
+    const logToFile = (message) => {
+        fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} - ${message}\n`);
+    };
+
+    const notionClient = new Client({
+        auth: NOTION_TOKEN,
+        fetch: async (url, options) => {
+            const logMessage = `Making request to URL: ${url} with options: ${JSON.stringify(options)}`;
+            logToFile(logMessage);
+            if (verbose) {
+                console.log(logMessage);
+            }
+            try {
+                const response = await axios({
+                    method: options.method,
+                    url,
+                    headers: options.headers,
+                    data: options.body,
+                    validateStatus: () => true, // Accept all HTTP status codes
+                });
+
+                const statusLogMessage = `HTTP Status: ${response.status}`;
+                logToFile(statusLogMessage);
+                if (verbose) {
+                    console.log(statusLogMessage);
+                }
+                if (response.status === 429) {
+                    const rateLimitLogMessage = 'Rate limit exceeded - waiting for 10 minutes before retrying';
+                    logToFile(rateLimitLogMessage);
+                    console.log(rateLimitLogMessage);
+                    // Retry after a delay
+                    await delay(rate_limit_reached_delay); // Wait for 10 minutes before retrying
+                    const retryLogMessage = "Retrying...";
+                    logToFile(retryLogMessage);
+                    console.log(retryLogMessage);
+                    return await notionClient.fetch(url, options); // Retry the request
+                }
+
+                return {
+                    ok: response.status >= 200 && response.status < 300,
+                    status: response.status,
+                    json: async () => response.data,
+                    text: async () => JSON.stringify(response.data), // Add text method
+                };
+            } catch (error) {
+                if (error.code === 'ECONNRESET') {
+                    const connectionResetLogMessage = 'Connection reset - retrying request';
+                    logToFile(connectionResetLogMessage);
+                    console.log(connectionResetLogMessage);
+                    await delay(socket_hangup_delay); // Wait for 10 seconds before retrying
+                    return await notionClient.fetch(url, options); // Retry the request
+                }
+                const errorLogMessage = `HTTP Request Error: ${error}`;
+                logToFile(errorLogMessage);
+                console.error(errorLogMessage);
+                throw error;
+            }
+        }
+    });
+
+    const createProxy = (target) => {
+        return new Proxy(target, {
+            get(target, prop, receiver) {
+                const originalMethod = target[prop];
+                const interceptLogMessage = `Intercepting property: ${prop}`;
+                logToFile(interceptLogMessage);
+                if (verbose) {
+                    console.log(interceptLogMessage);
+                }
+                if (typeof originalMethod === 'function') {
+                    return async function (...args) {
+                        try {
+                            const currentTime = Date.now();
+                            const timeSinceLastCall = currentTime - lastCallTime;
+                            if (timeSinceLastCall < delayMs) {
+                                await delay(delayMs - timeSinceLastCall + 10);
+                            }
+                            lastCallTime = Date.now();
+                            const methodCallLogMessage = `Calling method: ${prop}`;
+                            logToFile(methodCallLogMessage);
+                            if (verbose) {
+                                console.log(methodCallLogMessage);
+                            }
+                            const result = await originalMethod.apply(this, args);
+                            const responseLogMessage = `Response: ${JSON.stringify(result, null, 2)}`;
+                            logToFile(responseLogMessage);
+                            if (verbose) {
+                                console.log(responseLogMessage);
+                            }
+                            await delay(delayMs);
+                            return result;
+                        } catch (error) {
+                            const methodErrorLogMessage = `Error in method: ${prop} - ${error}`;
+                            logToFile(methodErrorLogMessage);
+                            console.error(methodErrorLogMessage);
+                            throw error; // Re-throw the error after logging
+                        }
+                    };
+                } else if (typeof originalMethod === 'object' && originalMethod !== null) {
+                    // Recursively create proxies for nested objects
+                    return createProxy(originalMethod);
+                }
+                return Reflect.get(target, prop, receiver);
+            }
+        });
+    };
+    return createProxy(notionClient);
+}
 
 async function query(databaseId, options) {
     let filter = null
@@ -60,7 +200,7 @@ async function query(databaseId, options) {
     //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
     const response = await notion.databases.query(querystring);
     if (options.exportdir) {
-        notion_object_export(options.exportdir, response.results);
+        notion_object_export(options.exportdir, response.results, options.database);
     };
     // $data->{result}->{has_more}
     // $data->{result}->{next_cursor}
@@ -87,12 +227,13 @@ async function query(databaseId, options) {
             querystring = { ...querystring_original, start_cursor: resp.next_cursor };
             resp = await notion.databases.query(querystring);
             if (options.exportdir) {
-                notion_object_export(options.exportdir, response.results);
+                notion_object_export(options.exportdir, response.results, options.database);
             }
             finalResp.push(resp);
             nextCursor.push(resp.next_cursor);
             hasMore.push(resp.has_more);
             counterArr.push(resp.results.length);
+            await delay(1000); // Ensure delay between requests
         };
         //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
         //console.log(finalResp.length);    
@@ -118,30 +259,39 @@ async function query(databaseId, options) {
 }
 
 async function databases(id, options) {
+    let response;
     if (id.length > 0 && !options.list && !options.retrieve) {
         options.retrieve = true
     }
     if (options.list || id.length == 0) {
-        const response = await notion.databases.list();
-        return response
+        const resp = await notion.databases.list();
+        response = resp.results;
     } else {
         // Needs a promise all
-        const response = await notion.databases.retrieve({ database_id: id[0] });
-        return response
+        response = [await notion.databases.retrieve({ database_id: id[0] })];
     }
+    if (options.exportdir) {
+        // console.log("DB Exporting to " + options.exportdir);
+        // console.log(response);
+        notion_object_export(options.exportdir, response, options.database);
+    }
+    return response;
 }
 
 async function block(id, options) {
-    let res = []
-    await Promise.all(id.map(async (blockId) => {
+    let res = [];
+    for (const blockId of id) {
+        console.log("block: " + blockId);
         const response = await notion.blocks.retrieve({ block_id: blockId });
-        let properties = response.properties
-        res.push(response)
-    }));
-    return res
+        let properties = response.properties;
+        res.push(response);
+        await delay(1000); // Ensure delay between requests
+    }
+    return res;
 }
 
-async function blocks(blockId, options) {
+async function blocks(blockId, options = {}) {
+    console.log("blocks: " + blockId);
     let querystring = {
         block_id: blockId,
     }
@@ -156,6 +306,9 @@ async function blocks(blockId, options) {
     };
     //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
     const response = await notion.blocks.children.list(querystring);
+    if (options.exportdir) {
+        notion_object_export(options.exportdir, response.results, options.database);
+    }
     // $data->{result}->{has_more}
     // $data->{result}->{next_cursor}
     // $data->{result}->{results}
@@ -176,11 +329,15 @@ async function blocks(blockId, options) {
         ) {
             // console.log("Repeat: ...");
             querystring = { ...querystring_original, start_cursor: resp.next_cursor };
-            resp = await notion.databases.query(querystring);
+            resp = await notion.blocks.children.list(querystring); // Corrected line
+            if (options.exportdir) {
+                notion_object_export(options.exportdir, resp.results, options.database);
+            };
             finalResp.push(resp);
             nextCursor.push(resp.next_cursor);
             hasMore.push(resp.has_more);
             counterArr.push(resp.results.length);
+            await delay(1000); // Ensure delay between requests
         };
         //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
         //console.log(finalResp.length);    
@@ -215,16 +372,28 @@ function gettoday() {
 };
 
 
-function notion_object_export(directory, response) {
-    response.forEach(r => {
+function notion_object_export(directory, response, database = false) {
+    response.forEach(async r => {
         const dir = makeDir(directory + "/" + r.object + "/");
         const filename = dir + r.id + ".json";
         fs.writeFile(filename, JSON.stringify(r), (err) => {
             if (err) throw err;
-            // console.log(`Data written to file: ${filename}`);
+            console.log(`Data written to file: ${filename}`);
         });
+        if (database) {
+            // Save to NeDB
+            await dbinsert(r, unique=true);
+            await delay(1000); // Ensure delay between requests
+        }
     });
 };
+
+function makeDir(outputdirectory) {
+    if (!fs.existsSync(outputdirectory)) {
+        fs.mkdirSync(outputdirectory);
+    }
+    return outputdirectory;
+}
 
 
 module.exports = {
@@ -234,5 +403,6 @@ module.exports = {
     block,
     blocks,
     gettoday,
-    notion_object_export
+    notion_object_export,
+    makeDir
 };
