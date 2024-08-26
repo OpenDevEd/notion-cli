@@ -244,6 +244,7 @@ async function update(id, options) {
         const titlefield = identifyTitle(properties);
         const prefix = options.prefix;
         console.log("titlefield=" + titlefield);
+        const newtitle = prefix + (properties[titlefield]?.title?.[0]?.text?.content || '');
         command = {
           ...command,
           properties:
@@ -252,9 +253,9 @@ async function update(id, options) {
               "title": [
                 {
                   text: {
-                    content: prefix + properties[titlefield].title[0].text.content
+                    content: newtitle
                   },
-                  plain_text: prefix + properties[titlefield].title[0].text.content
+                  plain_text: newtitle
                 },
               ]
             }
