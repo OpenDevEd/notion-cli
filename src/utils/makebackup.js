@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const {
     databases, query, block, blocks, getNotion, gettoday,
-    makeDir
+    makeDir, getRelativeTime
 } = require('./common.js'); // Assuming these functions are in a separate file
 
 const {
@@ -189,7 +189,9 @@ Contains blocks generated from pages content.`);
             const pagesPerSecond = (i + 1) / elapsedTime;
             const remainingPages = totalPages - (i + 1);
             const eta = remainingPages / pagesPerSecond;
-            process.stdout.write(`\rProgress: ${currentPercentage/10}% (${i + 1}/${totalPages}) ETA: ${eta.toFixed(0)}s`);
+            const etatimeRemaining = getRelativeTime(eta.toFixed(0), true);
+            const etatimeHMactual = getRelativeTime(eta.toFixed(0), false);
+            process.stdout.write(`\rProgress: ${currentPercentage/10}% (${i + 1}/${totalPages}), Remaining: ${etatimeRemaining}, ETA: ${etatimeHMactual}`);
             lastPercentage = currentPercentage;
         }
     }
