@@ -11,7 +11,7 @@ const {
     dbfind,
     dbthis
 } = require('./db.js');
-
+const { v4: uuidv4 } = require('uuid');
 
 
 /*
@@ -39,6 +39,11 @@ databases/databases.json
    datdatabase_${id}/pages/${pageid}/content_${pageid}.json
    database_${id}/pageblocks/${id}.json
    */
+
+function saveDocument(options, document, dir, filename) {
+    options.outputdirectory && writeJson(path.join(dir, filename), document);
+    options.database && dbinsert(document, unique = true);
+}
 
 async function makebackup(id, options) {
 
@@ -75,22 +80,27 @@ async function makebackup(id, options) {
     };
 
     const notion = getNotion();
-    console.log(id);
-    console.log(options);
+    console.log("ID: " + id);
+    console.log("Options: " + JSON.stringify(options));
     const today = gettoday();
     if (!options.outputdirectory) {
-        throw new Error('An outputdirectory is required.');
-    }
-    const outputdirectory = makeDir(options.outputdirectory + "/" + (options.nodate ? "" : today));
-    const objectdir = makeDir(outputdirectory + "/objects/");
+        // throw new Error('An outputdirectory is required.');
+        console.log("No outputdirectory specified: json will not be saved.");
+    };
+    if (!options.outputdirectory && !options.database) {
+        console.log("No outputdirectory or database specified: proceeding is futile.");
+        process.exit(1);
+    };
+    const outputdirectory = !options.outputdirectory ? "" : makeDir(options.outputdirectory + "/" + (options.nodate ? "" : today));
+    const objectdir = !options.outputdirectory ? "" : makeDir(outputdirectory + "/objects/");
     // The database structures are written to:
-    const databasesdir = makeDir(outputdirectory + "/databases/");
+    const databasesdir = !options.outputdirectory ? "" : makeDir(outputdirectory + "/databases/");
     // The pages contained in each database are written into this:
-    const database_content_dir = makeDir(outputdirectory + "/database_content/");
+    const database_content_dir = !options.outputdirectory ? "" : makeDir(outputdirectory + "/database_content/");
     // const databasedir = makeDir(objectdir + "/database/");
     // const pagedir = makeDir(objectdir + "/page/");
     // const pagesdir = makeDir(outputdirectory + "/pages/");
-    const page_content_dir = makeDir(outputdirectory + "/page_content/");
+    const page_content_dir = !options.outputdirectory ? "" : makeDir(outputdirectory + "/page_content/");
     // const blocksdir = makeDir(outputdirectory + "/blocks/");
 
     // Step 1: Get one or all databases:
@@ -100,8 +110,16 @@ async function makebackup(id, options) {
         "all": true,
         exportdir: objectdir
     });
-    writeJson(databasesdir + "index.json", database_list);
-    let database_files = [];
+    // options.outputdirectory && writeJson(databasesdir + "index.json", database_list);
+    const databaseListDocument = {
+        "object": "database_list",
+        "native_object": false,
+        "id": uuidv4(),
+        "last_edited_time": new Date().toISOString(),
+        contents: database_list
+    };
+    saveDocument(options, databaseListDocument, databasesdir, "index.json");
+    // let database_files = [];
     let page_ids = [];
     // Step 2: Iterate over the databases:
     for (const database of database_list) {
@@ -112,9 +130,9 @@ async function makebackup(id, options) {
         // This file contains the database object, i.e., the database structure:
         // writeJson(databasesdir + "structure_" + filename, database);
         // Step 5: Query the database to get the page entries:
-        fs.writeFileSync(objectdir + "info.txt", `Contains basic objects (such as pages and blocks.
-Contains pages generated from database content. Should also contain pages obtained from crawling, but not implemented yet.");
-Contains blocks generated from pages content.`);
+        options.outputdirectory && fs.writeFileSync(objectdir + "info.txt", `Contains basic objects (such as pages and blocks.
+            Contains pages generated from database content. Should also contain pages obtained from crawling, but not implemented yet.");
+            Contains blocks generated from pages content.`);
         const res = await query(database.id,
             {
                 ...options,
@@ -123,15 +141,17 @@ Contains blocks generated from pages content.`);
                 // "verbose": true,
             }); // ALL
         // The entries in that database to a file. These contain the database properties of that page.
-        const document = {
+        console.log(`- Entries in ${filename}: ${res.results.length}`);
+        const pages_in_database_doc = {
             "object": "database_content",
             "native_object": false,
-            "id": database.id,
+            "id": uuidv4(),
+            "database_id": database.id,
             "last_edited_time": new Date().toISOString(),
             contents: res.results
         }
-        const outfile = database_content_dir + "pages_" + filename;
-        writeJson(outfile, document);
+        // const outfile = database_content_dir + "pages_" + filename;
+        saveDocument(options, pages_in_database_doc, database_content_dir, `pages_${filename}`);
         // db.insert(document, (err, newDoc) => {
         //     if (err) {
         //         console.error('Error saving to NeDB:', err);
@@ -139,26 +159,26 @@ Contains blocks generated from pages content.`);
         //         console.log('Saved to NeDB:', newDoc);
         //     }
         // });
-        console.log(`- Entries in ${filename}: ${res.results.length}`);
         // To get page content, we now need to iterate overeach page.
         // Let's just save the filename for now, so we can load later:
-        database_files.push(outfile);
-        for (const page of document.contents) {
+        // database_files.push(outfile);
+        for (const page of pages_in_database_doc.contents) {
             page_ids.push(page.id);
         };
     };
 
-    console.log("Total pages captures: ", page_ids.length);
+    console.log("Total pages captured: ", page_ids.length);
     // fs.writeFileSync(`pages_${new Date().toISOString()}.txt`, page_ids.join("\n"));
-    const document = {
+    const pagesInDatabasesDocument = {
         "object": "pages_in_databases",
         "native_object": false,
-        "id": "",
+        "id": uuidv4(),
         "last_edited_time": new Date().toISOString(),
         contents: page_ids
     };
-    writeJson(databasesdir + "pages_in_databases.json", document);
-    if (!options.no_blocks) {
+    saveDocument(options, pagesInDatabasesDocument, databasesdir, "pages_in_databases.json");
+
+    if (options.noBlocks) {
         return;
     };
     const totalPages = page_ids.length;
@@ -174,16 +194,15 @@ Contains blocks generated from pages content.`);
         const document = {
             "object": "pageblocks",
             "native_object": false,
-            "id": pageid,
+            "id": uuidv4(),
+            "pageb_id": pageid,
             "last_edited_time": new Date().toISOString(),
             contents: content.results
         }
-        writeJson(page_content_dir + pageid + ".json", document);
-        if (options.database) {
-            dbinsert(document, unique = true);
-        };        
+        saveDocument(options, document, page_content_dir, `${pageid}.json`);
         // Show progress every 1%
-        const currentPercentage = Math.floor((i + 1) / totalPages * 1000);
+        const perentageFraction = 100;
+        const currentPercentage = Math.floor((i + 1) / totalPages * 100 * perentageFraction);
         if (currentPercentage > lastPercentage) {
             const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
             const pagesPerSecond = (i + 1) / elapsedTime;
@@ -191,7 +210,7 @@ Contains blocks generated from pages content.`);
             const eta = remainingPages / pagesPerSecond;
             const etatimeRemaining = getRelativeTime(eta.toFixed(0), true);
             const etatimeHMactual = getRelativeTime(eta.toFixed(0), false);
-            process.stdout.write(`\rProgress: ${currentPercentage/10}% (${i + 1}/${totalPages}), Remaining: ${etatimeRemaining}, ETA: ${etatimeHMactual}`);
+            process.stdout.write(`\rProgress @ ${now()}: ${currentPercentage / perentageFraction}% (${i + 1}/${totalPages}). Remaining: ${etatimeRemaining}, ETA: ${etatimeHMactual}`);
             lastPercentage = currentPercentage;
         }
     }
@@ -229,13 +248,11 @@ Contains blocks generated from pages content.`);
     // return database_list;
 };
 
-function writeJson(filename, entry) {
+function writeJson(filename, entry, verbose = false) {
     fs.writeFile(filename, JSON.stringify(entry), (err) => {
         if (err) throw err;
-        console.log(`Data written to file: ${filename}`);
+        verbose && console.log(`Data written to file: ${filename}`);
     });
 }
-
-
 
 module.exports = { makebackup, makeDir, writeJson };

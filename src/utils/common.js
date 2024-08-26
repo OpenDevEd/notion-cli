@@ -22,8 +22,13 @@ const logToFile = (logFile, message) => {
     fs.appendFileSync(logFile, `${new Date().toISOString()} - ${message}\n`);
 };
 
-function now() {
-    return new Date().toISOString();
+function now(ms = false) {
+    const date = new Date();
+    if (ms) {
+        return date.toISOString();
+    } else {
+        return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    }
 };
 
 const fetchWithRetries = async (url, options, logFile, verbose, maxRetries) => {
@@ -61,7 +66,7 @@ const fetchWithRetries = async (url, options, logFile, verbose, maxRetries) => {
             const message = `HTTP Request Error: ${error}. Waiting for ${general_api_error_delay_min} minutes before retrying`;
             logToFile(logFile, message);
             console.error(now() + " " + message);
-            await delay(general_api_error_delay); 
+            await delay(general_api_error_delay);
             logToFile(logFile, 'Retrying request');
             console.log(now() + ': Retrying request');
             retries++;
@@ -73,7 +78,7 @@ const fetchWithRetries = async (url, options, logFile, verbose, maxRetries) => {
     throw new Error(failLogMessage);
 };
 
-const createProxy = (target, logFile, verbose, delayMs, socket_hangup_delay) => {
+const createProxy = (target, logFile, verbose, delayMs, safety_delay) => {
     let lastCallTime = 0;
 
     return new Proxy(target, {
@@ -105,13 +110,13 @@ const createProxy = (target, logFile, verbose, delayMs, socket_hangup_delay) => 
                         console.error(`Error in method: ${prop} - ${error}`);
                         logToFile(logFile, 'Error occurred in method - retrying request');
                         console.log('Error occurred in method - retrying request');
-                        await delay(socket_hangup_delay); // Wait for 10 seconds before retrying
+                        await delay(safety_delay); // Wait for 10 seconds before retrying
                         return await originalMethod.apply(this, args); // Retry the method
                     }
                 };
             } else if (typeof originalMethod === 'object' && originalMethod !== null) {
                 // Recursively create proxies for nested objects
-                return createProxy(originalMethod, logFile, verbose, delayMs, socket_hangup_delay);
+                return createProxy(originalMethod, logFile, verbose, delayMs, safety_delay);
             }
             return Reflect.get(target, prop, receiver);
         }
@@ -193,11 +198,10 @@ async function query(databaseId, options) {
     if (options.cursor) {
         querystring = { ...querystring, start_cursor: options.cursor }
     };
+    console.log(`Database ID: ${databaseId}`);
     //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
     const response = await notion.databases.query(querystring);
-    if (options.exportdir) {
-        notion_object_export(options.exportdir, response.results, options.database);
-    };
+    notion_object_export(response.results, options.exportdir, options.database);
     // $data->{result}->{has_more}
     // $data->{result}->{next_cursor}
     // $data->{result}->{results}
@@ -218,21 +222,24 @@ async function query(databaseId, options) {
             && resp.next_cursor
         ) {
             iteration++;
-            // This doesn't quite work as expected:
-            if (options.verbose) console.log(`Fetching iteration ${iteration}, number of pages ${options.page_size ? options.page_size : 100} = ${iteration * parseInt(options.page_size ? options.page_size : 100)} `);
+            const msg = `- ${now()}: Database ID: ${databaseId} - iteration ${iteration}, number of pages ${options.page_size ? options.page_size : 100} = ${iteration * parseInt(options.page_size ? options.page_size : 100)} `;
+            if (options.verbose) {
+                console.log(msg);
+            } else {
+                process.stdout.write(`\r${msg}`);
+            }
             querystring = { ...querystring_original, start_cursor: resp.next_cursor };
             resp = await notion.databases.query(querystring);
-            if (options.exportdir) {
-                notion_object_export(options.exportdir, response.results, options.database);
-            }
+            notion_object_export(resp.results, options.exportdir, options.database);
             finalResp.push(resp);
             nextCursor.push(resp.next_cursor);
             hasMore.push(resp.has_more);
             counterArr.push(resp.results.length);
-            await delay(1000); // Ensure delay between requests
+            // await delay(1000); // Ensure delay between requests
         };
+        iteration > 0 && console.log();
         //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
-        //console.log(finalResp.length);    
+        //console.log(finalResp.length);
         if (options.all) {
             // Flatten
             finalResp = finalResp.map(a => { return a.results });
@@ -242,6 +249,7 @@ async function query(databaseId, options) {
             // Option to switch
             // obj => Object.fromEntries(Object.entries(obj).map(([k, v]) => [v, k]))
         };
+        console.log(`- Final number of entries: ${finalResp.length}`);
         return {
             "next_cursor_array": nextCursor,
             "has_more_array": hasMore,
@@ -250,6 +258,7 @@ async function query(databaseId, options) {
         };
     } else {
         // console.log("Simple");
+        console.log(`- Final number of entries: ${response.length}`);
         return response;
     };
 }
@@ -266,11 +275,11 @@ async function databases(id, options) {
         // Needs a promise all
         response = [await notion.databases.retrieve({ database_id: id[0] })];
     }
-    if (options.exportdir) {
-        // console.log("DB Exporting to " + options.exportdir);
-        // console.log(response);
-        notion_object_export(options.exportdir, response, options.database);
-    }
+    // if (options.exportdir) {
+    // console.log("DB Exporting to " + options.exportdir);
+    // console.log(response);
+    notion_object_export(response, options.exportdir, options.database);
+    // }
     return response;
 }
 
@@ -304,9 +313,7 @@ async function blocks(blockId, options = {}) {
     };
     //console.log("TEMPORARY="+JSON.stringify(   querystring         ,null,2));
     const response = await notion.blocks.children.list(querystring);
-    if (options.exportdir) {
-        notion_object_export(options.exportdir, response.results, options.database);
-    }
+    notion_object_export(response.results, options.exportdir, options.database);
     // $data->{result}->{has_more}
     // $data->{result}->{next_cursor}
     // $data->{result}->{results}
@@ -328,9 +335,7 @@ async function blocks(blockId, options = {}) {
             // console.log("Repeat: ...");
             querystring = { ...querystring_original, start_cursor: resp.next_cursor };
             resp = await notion.blocks.children.list(querystring); // Corrected line
-            if (options.exportdir) {
-                notion_object_export(options.exportdir, resp.results, options.database);
-            };
+            notion_object_export(resp.results, options.exportdir, options.database);
             finalResp.push(resp);
             nextCursor.push(resp.next_cursor);
             hasMore.push(resp.has_more);
@@ -370,14 +375,16 @@ function gettoday() {
 };
 
 
-function notion_object_export(directory, response, database = false) {
+function notion_object_export(response, directory = null, database = false) {
     response.forEach(async r => {
-        const dir = makeDir(directory + "/" + r.object + "/");
-        const filename = dir + r.id + ".json";
-        fs.writeFile(filename, JSON.stringify(r), (err) => {
-            if (err) throw err;
-            // console.log(`Data written to file: ${filename}`);
-        });
+        if (directory) {
+            const dir = makeDir(directory + "/" + r.object + "/");
+            const filename = dir + r.id + ".json";
+            fs.writeFile(filename, JSON.stringify(r), (err) => {
+                if (err) throw err;
+                // console.log(`Data written to file: ${filename}`);
+            });
+        }
         if (database) {
             // Save to NeDB
             await dbinsert(r, unique=true);
