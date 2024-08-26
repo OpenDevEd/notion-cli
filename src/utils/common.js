@@ -33,7 +33,6 @@ function getNotion() {
     });
 }
 
-
 function getNotionWithDelay(delayMs, verbose = false) {
     const confdir = require('os').homedir() + "/.config/notion-cli/"
     const CONFIG_FILE = confdir + 'config.json';
@@ -92,17 +91,14 @@ function getNotionWithDelay(delayMs, verbose = false) {
                     text: async () => JSON.stringify(response.data), // Add text method
                 };
             } catch (error) {
-                if (error.code === 'ECONNRESET') {
-                    const connectionResetLogMessage = 'Connection reset - retrying request';
-                    logToFile(connectionResetLogMessage);
-                    console.log(connectionResetLogMessage);
-                    await delay(socket_hangup_delay); // Wait for 10 seconds before retrying
-                    return await notionClient.fetch(url, options); // Retry the request
-                }
                 const errorLogMessage = `HTTP Request Error: ${error}`;
                 logToFile(errorLogMessage);
                 console.error(errorLogMessage);
-                throw error;
+                const retryLogMessage = 'Error occurred - retrying request';
+                logToFile(retryLogMessage);
+                console.log(retryLogMessage);
+                await delay(socket_hangup_delay); // Wait for 10 seconds before retrying
+                return await notionClient.fetch(url, options); // Retry the request
             }
         }
     });
@@ -131,9 +127,9 @@ function getNotionWithDelay(delayMs, verbose = false) {
                                 console.log(methodCallLogMessage);
                             }
                             const result = await originalMethod.apply(this, args);
-                            const responseLogMessage = `Response: ${JSON.stringify(result, null, 2)}`;
-                            logToFile(responseLogMessage);
                             if (verbose) {
+                                const responseLogMessage = `Response: ${JSON.stringify(result, null, 2)}`;
+                                logToFile(responseLogMessage);
                                 console.log(responseLogMessage);
                             }
                             await delay(delayMs);
@@ -142,7 +138,11 @@ function getNotionWithDelay(delayMs, verbose = false) {
                             const methodErrorLogMessage = `Error in method: ${prop} - ${error}`;
                             logToFile(methodErrorLogMessage);
                             console.error(methodErrorLogMessage);
-                            throw error; // Re-throw the error after logging
+                            const retryLogMessage = 'Error occurred in method - retrying request';
+                            logToFile(retryLogMessage);
+                            console.log(retryLogMessage);
+                            await delay(socket_hangup_delay); // Wait for 10 seconds before retrying
+                            return await originalMethod.apply(this, args); // Retry the method
                         }
                     };
                 } else if (typeof originalMethod === 'object' && originalMethod !== null) {
@@ -281,11 +281,13 @@ async function databases(id, options) {
 async function block(id, options) {
     let res = [];
     for (const blockId of id) {
-        console.log("block: " + blockId);
+        if (options.verbose) {
+            console.log("block: " + blockId);
+        }
         const response = await notion.blocks.retrieve({ block_id: blockId });
         let properties = response.properties;
         res.push(response);
-        await delay(1000); // Ensure delay between requests
+        // await delay(1000); // Ensure delay between requests
     }
     return res;
 }
@@ -337,7 +339,7 @@ async function blocks(blockId, options = {}) {
             nextCursor.push(resp.next_cursor);
             hasMore.push(resp.has_more);
             counterArr.push(resp.results.length);
-            await delay(1000); // Ensure delay between requests
+            // await delay(1000); // Ensure delay between requests
         };
         //console.log("XTEMPORARY="+JSON.stringify(    finalResp       ,null,2))
         //console.log(finalResp.length);    
@@ -378,12 +380,12 @@ function notion_object_export(directory, response, database = false) {
         const filename = dir + r.id + ".json";
         fs.writeFile(filename, JSON.stringify(r), (err) => {
             if (err) throw err;
-            console.log(`Data written to file: ${filename}`);
+            // console.log(`Data written to file: ${filename}`);
         });
         if (database) {
             // Save to NeDB
             await dbinsert(r, unique=true);
-            await delay(1000); // Ensure delay between requests
+            // await delay(1000); 
         }
     });
 };

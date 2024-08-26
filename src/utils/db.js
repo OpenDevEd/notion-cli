@@ -16,7 +16,8 @@ function dbinit(dbPath, exists = false) {
     // const mainDir = path.dirname(require.main.filename);
     db = new Datastore({ filename: dbPath, autoload: true });
 }
-function dbinsert(document, unique = true) {
+
+function dbinsert(document, unique = true, verbose = false) {
     if (!db) {
         console.error('Database not initialized');
         process.exit(1);
@@ -27,10 +28,12 @@ function dbinsert(document, unique = true) {
         const newObj = {};
         for (let key in obj) {
             if (obj.hasOwnProperty(key)) {
-                const newKey = key.replace(/\./g, '___');
-                if (newKey !== key) {
-                    console.log(`Replaced key: "${key}" with "${newKey}"`);
-                }
+                const newKey = key.replace(/\./g, '፨');
+                if (verbose) {
+                    if (newKey !== key) {
+                        console.log(`Replaced key: "${key}" with "${newKey}"`);
+                    }
+                };
                 newObj[newKey] = typeof obj[key] === 'object' && obj[key] !== null
                     ? replaceDots(obj[key])
                     : obj[key];
@@ -46,7 +49,9 @@ function dbinsert(document, unique = true) {
         // Check if the document already exists
         db.findOne({ id: sanitizedDocument.id }, (err, doc) => {
             if (doc) {
-                console.log('Document already exists:', sanitizedDocument.id);
+                if (verbose) {
+                    console.log('Document already exists:', sanitizedDocument.id);
+                };
                 return true;
             } else {
                 insertDocument(sanitizedDocument);
@@ -62,7 +67,9 @@ function dbinsert(document, unique = true) {
                 console.error('Error saving to NeDB:', err);
                 return false;
             } else {
-                // console.log('Saved to NeDB:', newDoc);
+                if (verbose) {
+                    console.log('Saved to NeDB:', newDoc);
+                };
                 return true;
             }
         });

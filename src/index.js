@@ -148,9 +148,10 @@ program
   //.option('-o, --outputdirectory <outputdirectory>', 'Output directory or json file with a key "outputdirectory" that specifies the output directory.')
   .option('-o, --outputdirectory <outputdirectory>', 'Output directory.')
   .option('-n, --nodate', 'Normally, the current date is added to the output dir. Use -n to not do this.')
-  .option('-d, --database <database>', 'Create a database of the backup. Either specify a path or a json file with a key "dbpath" that specifies the path.')
+  .option('-d, --database <database>', 'Update a database with the contents of the backup. Either specify a path or a json file with a key "dbpath" that specifies the path.')
   .option('-c, --create', 'Create if no database exists. Otherwise, the database is not created.')
   .option('-r, --remove', 'Remove existing database.')
+  .option('-nb, --no-blocks', 'Do not backup page content (page blocks).', false)
   .description('Backup the database <database> or all databases. Depending on the size of your database, this could take a long time (hours) to complete. Currently, the database structure and all database entries are backup. Page content is not backed up.')
   .action(async (id, options) => {
     runner(makebackup, id, options)

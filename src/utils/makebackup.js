@@ -101,6 +101,8 @@ async function makebackup(id, options) {
         exportdir: objectdir
     });
     writeJson(databasesdir + "index.json", database_list);
+    let database_files = [];
+    let page_ids = [];
     // Step 2: Iterate over the databases:
     for (const database of database_list) {
         // Step 3: Get the database title:
@@ -128,7 +130,8 @@ Contains blocks generated from pages content.`);
             "last_edited_time": new Date().toISOString(),
             contents: res.results
         }
-        writeJson(database_content_dir + "pages_" + filename, document);
+        const outfile = database_content_dir + "pages_" + filename;
+        writeJson(outfile, document);
         // db.insert(document, (err, newDoc) => {
         //     if (err) {
         //         console.error('Error saving to NeDB:', err);
@@ -138,30 +141,87 @@ Contains blocks generated from pages content.`);
         // });
         console.log(`- Entries in ${filename}: ${res.results.length}`);
         // To get page content, we now need to iterate overeach page.
-        for (const page of res.results) {
-            // Step 6: Get the page content:
-            const content = await blocks(page.id, {
-                ...options,
-                "all": true,
-                "exportdir": objectdir
-            });
-            const document = {
-                "object": "pageblocks",
-                "native_object": false,
-                "id": page.id,
-                "last_edited_time": new Date().toISOString(),
-                contents: content.results
-            }
-            writeJson(page_content_dir + page.id + ".json", document);
-            if (options.database) {
-                dbinsert(document, unique = true);
-            };
-            /* 
-              notion_object_export(objectdir, content.results);
-              // We may then need to get blocks as well...
-            */
+        // Let's just save the filename for now, so we can load later:
+        database_files.push(outfile);
+        for (const page of document.contents) {
+            page_ids.push(page.id);
+        };
+    };
+
+    console.log("Total pages captures: ", page_ids.length);
+    // fs.writeFileSync(`pages_${new Date().toISOString()}.txt`, page_ids.join("\n"));
+    const document = {
+        "object": "pages_in_databases",
+        "native_object": false,
+        "id": "",
+        "last_edited_time": new Date().toISOString(),
+        contents: page_ids
+    };
+    writeJson(databasesdir + "pages_in_databases.json", document);
+    if (!options.no_blocks) {
+        return;
+    };
+    const totalPages = page_ids.length;
+    let lastPercentage = -1;
+    const startTime = Date.now();
+    for (let i = 0; i < totalPages; i++) {
+        const pageid = page_ids[i];
+        const content = await blocks(pageid, {
+            ...options,
+            "all": true,
+            "exportdir": objectdir
+        });
+        const document = {
+            "object": "pageblocks",
+            "native_object": false,
+            "id": pageid,
+            "last_edited_time": new Date().toISOString(),
+            contents: content.results
+        }
+        writeJson(page_content_dir + pageid + ".json", document);
+        if (options.database) {
+            dbinsert(document, unique = true);
+        };        
+        // Show progress every 1%
+        const currentPercentage = Math.floor((i + 1) / totalPages * 1000);
+        if (currentPercentage > lastPercentage) {
+            const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+            const pagesPerSecond = (i + 1) / elapsedTime;
+            const remainingPages = totalPages - (i + 1);
+            const eta = remainingPages / pagesPerSecond;
+            process.stdout.write(`\rProgress: ${currentPercentage/10}% (${i + 1}/${totalPages}) ETA: ${eta.toFixed(0)}s`);
+            lastPercentage = currentPercentage;
         }
     }
+    console.log(); // New line after progress is complete
+
+    // for (const filename of database_files) {
+    //     const res = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    //     const pages = res.contents;
+    //     for (const page of pages) {
+    //         // Step 6: Get the page content:
+    //         const content = await blocks(page.id, {
+    //             ...options,
+    //             "all": true,
+    //             "exportdir": objectdir
+    //         });
+    //         const document = {
+    //             "object": "pageblocks",
+    //             "native_object": false,
+    //             "id": page.id,
+    //             "last_edited_time": new Date().toISOString(),
+    //             contents: content.results
+    //         }
+    //         writeJson(page_content_dir + page.id + ".json", document);
+    //         if (options.database) {
+    //             dbinsert(document, unique = true);
+    //         };
+    //         /* 
+    //           notion_object_export(objectdir, content.results);
+    //           // We may then need to get blocks as well...
+    //         */
+    //     }
+    // }
 
     // console.log(database_list.length);
     // return database_list;
