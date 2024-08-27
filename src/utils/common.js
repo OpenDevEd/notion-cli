@@ -19,6 +19,11 @@ const general_api_error_delay = general_api_error_delay_min * 60 * 1000;
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const logToFile = (logFile, message) => {
+    // Limit the size of the log message to prevent excessive logging
+    const maxLogSize = 10000; // Adjust as needed
+    if (message.length > maxLogSize) {
+        message = message.substring(0, maxLogSize) + '... [truncated]';
+    }
     fs.appendFileSync(logFile, `${new Date().toISOString()} - ${message}\n`);
 };
 
@@ -100,8 +105,10 @@ const createProxy = (target, logFile, verbose, delayMs, safety_delay) => {
                         if (verbose) console.log(`Calling method: ${prop}`);
                         const result = await originalMethod.apply(this, args);
                         if (verbose) {
-                            logToFile(logFile, `Response: ${JSON.stringify(result, null, 2)}`);
-                            console.log(`Response: ${JSON.stringify(result, null, 2)}`);
+                            // Limit the size of the response logged
+                            const responseString = JSON.stringify(result, null, 2);
+                            logToFile(logFile, `Response: ${responseString.substring(0, 10000)}... [truncated]`);
+                            console.log(`Response: ${responseString.substring(0, 10000)}... [truncated]`);
                         }
                         await delay(delayMs);
                         return result;
@@ -264,23 +271,36 @@ async function query(databaseId, options) {
 }
 
 async function databases(id, options) {
-    let response;
-    if (id.length > 0 && !options.list && !options.retrieve) {
-        options.retrieve = true
+    try {
+        let response;
+        if (id.length > 0 && !options.list && !options.retrieve) {
+            options.retrieve = true
+        }
+        if (options.list || id.length == 0) {
+            // const resp = await notion.databases.list();
+            const resp = await notion.search({
+                filter: {
+                    property: 'object',
+                    value: 'database',
+                },
+            });
+            process.exit(0);
+
+            response = resp.results;
+        } else {
+            // Needs a promise all
+            response = [await notion.databases.retrieve({ database_id: id[0] })];
+        }
+        // if (options.exportdir) {
+        // console.log("DB Exporting to " + options.exportdir);
+        // console.log(response);
+        notion_object_export(response, options.exportdir, options.database);
+        // }
+        return response;
+    } catch (error) {
+        console.error('Error fetching databases:', error);
+        throw error;
     }
-    if (options.list || id.length == 0) {
-        const resp = await notion.databases.list();
-        response = resp.results;
-    } else {
-        // Needs a promise all
-        response = [await notion.databases.retrieve({ database_id: id[0] })];
-    }
-    // if (options.exportdir) {
-    // console.log("DB Exporting to " + options.exportdir);
-    // console.log(response);
-    notion_object_export(response, options.exportdir, options.database);
-    // }
-    return response;
 }
 
 async function block(id, options) {
@@ -435,5 +455,5 @@ module.exports = {
     gettoday,
     notion_object_export,
     makeDir,
-    getRelativeTime
+    getRelativeTime, now
 };

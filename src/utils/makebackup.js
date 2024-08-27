@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const {
     databases, query, block, blocks, getNotion, gettoday,
-    makeDir, getRelativeTime
+    makeDir, getRelativeTime, now
 } = require('./common.js'); // Assuming these functions are in a separate file
 
 const {
@@ -51,17 +51,23 @@ async function makebackup(id, options) {
         // const mainDir = path.dirname(require.main.filename);
         // const dbpath = path.join(mainDir, '../viewer/data', 'data.db');
         let dbpath;
-        if (fs.existsSync(options.database) && options.database.endsWith(".json")) {
-            const config = JSON.parse(fs.readFileSync(options.database, 'utf8'));
-            dbpath = config.dbpath;
-            console.log("DBPATH loaded from json: " + dbpath);
-            const dbDir = path.dirname(dbpath);
-            if (!fs.existsSync(dbDir)) {
-                console.log("Creating directory: " + dbDir);
-                fs.mkdirSync(dbDir, { recursive: true });
+        try {
+            if (fs.existsSync(options.database) && options.database.endsWith(".json")) {
+                console.log(`Reading database config from: ${options.database}`);
+                const config = JSON.parse(fs.readFileSync(options.database, 'utf8'));
+                dbpath = config.dbpath;
+                console.log("DBPATH loaded from json: " + dbpath);
+                const dbDir = path.dirname(dbpath);
+                if (!fs.existsSync(dbDir)) {
+                    console.log("Creating directory: " + dbDir);
+                    fs.mkdirSync(dbDir, { recursive: true });
+                }
+            } else {
+                dbpath = options.database;
             }
-        } else {
-            dbpath = options.database;
+        } catch (error) {
+            console.error('Error reading database config:', error);
+            throw error;
         }
         if (options.remove) {
             if (fs.existsSync(dbpath)) {
@@ -79,6 +85,7 @@ async function makebackup(id, options) {
         dbinit(dbpath);
     };
 
+    console.log("Getting notion");
     const notion = getNotion();
     console.log("ID: " + id);
     console.log("Options: " + JSON.stringify(options));
@@ -103,13 +110,17 @@ async function makebackup(id, options) {
     const page_content_dir = !options.outputdirectory ? "" : makeDir(outputdirectory + "/page_content/");
     // const blocksdir = makeDir(outputdirectory + "/blocks/");
 
+    console.log("Getting datrabases");
     // Step 1: Get one or all databases:
     // const database_list = await notion.databases.list();
-    const database_list = await databases(id, {
+    const param = {
         ...options,
         "all": true,
         exportdir: objectdir
-    });
+    };
+    console.log("PARAM: " + JSON.stringify(param));
+    const database_list = await databases(id, param);
+    console.log(`Fetched ${database_list.length} databases`);
     // options.outputdirectory && writeJson(databasesdir + "index.json", database_list);
     const databaseListDocument = {
         "object": "database_list",
@@ -133,38 +144,43 @@ async function makebackup(id, options) {
         options.outputdirectory && fs.writeFileSync(objectdir + "info.txt", `Contains basic objects (such as pages and blocks.
             Contains pages generated from database content. Should also contain pages obtained from crawling, but not implemented yet.");
             Contains blocks generated from pages content.`);
-        const res = await query(database.id,
-            {
-                ...options,
-                "exportdir": objectdir,
-                "all": true,
-                // "verbose": true,
-            }); // ALL
-        // The entries in that database to a file. These contain the database properties of that page.
-        console.log(`- Entries in ${filename}: ${res.results.length}`);
-        const pages_in_database_doc = {
-            "object": "database_content",
-            "native_object": false,
-            "id": uuidv4(),
-            "database_id": database.id,
-            "last_edited_time": new Date().toISOString(),
-            contents: res.results
+        try {
+            const res = await query(database.id,
+                {
+                    ...options,
+                    "exportdir": objectdir,
+                    "all": true,
+                    // "verbose": true,
+                }); // ALL
+            // The entries in that database to a file. These contain the database properties of that page.
+            console.log(`- Entries in ${filename}: ${res.results.length}`);
+            const pages_in_database_doc = {
+                "object": "database_content",
+                "native_object": false,
+                "id": uuidv4(),
+                "database_id": database.id,
+                "last_edited_time": new Date().toISOString(),
+                contents: res.results
+            }
+            // const outfile = database_content_dir + "pages_" + filename;
+            saveDocument(options, pages_in_database_doc, database_content_dir, `pages_${filename}`);
+            // db.insert(document, (err, newDoc) => {
+            //     if (err) {
+            //         console.error('Error saving to NeDB:', err);
+            //     } else {
+            //         console.log('Saved to NeDB:', newDoc);
+            //     }
+            // });
+            // To get page content, we now need to iterate overeach page.
+            // Let's just save the filename for now, so we can load later:
+            // database_files.push(outfile);
+            for (const page of pages_in_database_doc.contents) {
+                page_ids.push(page.id);
+            };
+        } catch (error) {
+            console.error('Error querying database:', error);
+            throw error;
         }
-        // const outfile = database_content_dir + "pages_" + filename;
-        saveDocument(options, pages_in_database_doc, database_content_dir, `pages_${filename}`);
-        // db.insert(document, (err, newDoc) => {
-        //     if (err) {
-        //         console.error('Error saving to NeDB:', err);
-        //     } else {
-        //         console.log('Saved to NeDB:', newDoc);
-        //     }
-        // });
-        // To get page content, we now need to iterate overeach page.
-        // Let's just save the filename for now, so we can load later:
-        // database_files.push(outfile);
-        for (const page of pages_in_database_doc.contents) {
-            page_ids.push(page.id);
-        };
     };
 
     console.log("Total pages captured: ", page_ids.length);
@@ -184,35 +200,43 @@ async function makebackup(id, options) {
     const totalPages = page_ids.length;
     let lastPercentage = -1;
     const startTime = Date.now();
-    for (let i = 0; i < totalPages; i++) {
-        const pageid = page_ids[i];
-        const content = await blocks(pageid, {
-            ...options,
-            "all": true,
-            "exportdir": objectdir
-        });
-        const document = {
-            "object": "pageblocks",
-            "native_object": false,
-            "id": uuidv4(),
-            "pageb_id": pageid,
-            "last_edited_time": new Date().toISOString(),
-            contents: content.results
+    try {
+        for (let i = 0; i < totalPages; i++) {
+            const pageid = page_ids[i];
+            console.log(`Fetching content for page: ${pageid}`);
+            const content = await blocks(pageid, {
+                ...options,
+                "all": true,
+                "exportdir": objectdir
+            });
+            console.log(`Fetched ${content.results.length} blocks for page: ${pageid}`);
+
+            const document = {
+                "object": "pageblocks",
+                "native_object": false,
+                "id": uuidv4(),
+                "pageb_id": pageid,
+                "last_edited_time": new Date().toISOString(),
+                contents: content.results
+            }
+            saveDocument(options, document, page_content_dir, `${pageid}.json`);
+            // Show progress every 1%
+            const perentageFraction = 100;
+            const currentPercentage = Math.floor((i + 1) / totalPages * 100 * perentageFraction);
+            if (currentPercentage > lastPercentage) {
+                const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+                const pagesPerSecond = (i + 1) / elapsedTime;
+                const remainingPages = totalPages - (i + 1);
+                const eta = remainingPages / pagesPerSecond;
+                const etatimeRemaining = getRelativeTime(eta.toFixed(0), true);
+                const etatimeHMactual = getRelativeTime(eta.toFixed(0), false);
+                process.stdout.write(`\rProgress @ ${now()}: ${currentPercentage / perentageFraction}% (${i + 1}/${totalPages}). Remaining: ${etatimeRemaining}, ETA: ${etatimeHMactual}`);
+                lastPercentage = currentPercentage;
+            }
         }
-        saveDocument(options, document, page_content_dir, `${pageid}.json`);
-        // Show progress every 1%
-        const perentageFraction = 100;
-        const currentPercentage = Math.floor((i + 1) / totalPages * 100 * perentageFraction);
-        if (currentPercentage > lastPercentage) {
-            const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
-            const pagesPerSecond = (i + 1) / elapsedTime;
-            const remainingPages = totalPages - (i + 1);
-            const eta = remainingPages / pagesPerSecond;
-            const etatimeRemaining = getRelativeTime(eta.toFixed(0), true);
-            const etatimeHMactual = getRelativeTime(eta.toFixed(0), false);
-            process.stdout.write(`\rProgress @ ${now()}: ${currentPercentage / perentageFraction}% (${i + 1}/${totalPages}). Remaining: ${etatimeRemaining}, ETA: ${etatimeHMactual}`);
-            lastPercentage = currentPercentage;
-        }
+    } catch (error) {
+        console.error('Error processing page content:', error);
+        throw error;
     }
     console.log(); // New line after progress is complete
 
